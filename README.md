@@ -1,3 +1,10 @@
+<h1 align="center">
+WARNING - COPY OF REPO NOT ORIGINAL 
+</h1>
+<p></p>
+<p></p>
+
+
 # 👋 Open WebUI Documentation
 
 Welcome to the official documentation for **Open WebUI** — a self-hosted, privacy-focused, and extensible AI interface for LLMs like Ollama and OpenAI-compatible APIs.
