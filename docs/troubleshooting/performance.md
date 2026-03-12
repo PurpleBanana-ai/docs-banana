@@ -1,6 +1,6 @@
 ---
 sidebar_position: 15
-title: "Optimization, Performance & RAM Usage"
+title: "Performance & RAM"
 ---
 
 # Optimization, Performance & RAM Usage
@@ -91,7 +91,7 @@ By default, Open WebUI saves chats **after generation is complete**. While savin
 
 -   **Env Var**: `ENABLE_REALTIME_CHAT_SAVE=False` (Default)
 -   **Effect**: Chats are saved only when the generation is complete (or periodically).
--   **Recommendation**: **DO NOT ENABLE `ENABLE_REALTIME_CHAT_SAVE` in production.** It is highly recommended to keep this `False` to prevent database connection exhaustion and severe performance degradation under concurrent load. See the [Environment Variable Configuration](/getting-started/env-configuration#enable_realtime_chat_save) for details.
+-   **Recommendation**: **DO NOT ENABLE `ENABLE_REALTIME_CHAT_SAVE` in production.** It is highly recommended to keep this `False` to prevent database connection exhaustion and severe performance degradation under concurrent load. See the [Environment Variable Configuration](/reference/env-configuration#enable_realtime_chat_save) for details.
 
 ### Database Session Sharing
 
@@ -125,13 +125,48 @@ For high-concurrency PostgreSQL deployments, the default connection pool setting
 ### Vector Database (RAG)
 For multi-user setups, the choice of Vector DB matters.
 
--   **ChromaDB**: **NOT RECOMMENDED** for multi-user environments due to performance limitations and locking issues.
+-   **ChromaDB (Default)**: **NOT SAFE** for multi-worker (`UVICORN_WORKERS > 1`) or multi-replica deployments. The default ChromaDB configuration uses a local `PersistentClient` backed by **SQLite**. SQLite connections are not fork-safe — when uvicorn forks multiple workers, each process inherits the same database connection, and concurrent writes cause instant worker crashes (`Child process died`) or database corruption. This is a fundamental SQLite limitation, not a bug. See the [Scaling & HA troubleshooting guide](/troubleshooting/multi-replica#6-worker-crashes-during-document-upload-chromadb--multi-worker) for the full crash sequence and solutions.
 -   **Recommendations**:
-    *   **Milvus** or **Qdrant**: Best for improved scale and performance.
-    *   **PGVector**: Excellent choice if you are already using PostgreSQL.
+    *   **Milvus** or **Qdrant**: Best for improved scale and performance. These are client-server databases, inherently safe for multi-process access.
+    *   **PGVector**: Excellent choice if you are already using PostgreSQL. Also fully multi-process safe.
+    *   **ChromaDB HTTP mode**: If you want to keep using ChromaDB, run it as a [separate server](/reference/env-configuration#chroma_http_host) so Open WebUI connects via HTTP instead of local SQLite.
 -   **Multitenancy**: If using Milvus or Qdrant, enabling multitenancy offers better resource sharing.
     *   `ENABLE_MILVUS_MULTITENANCY_MODE=True`
     *   `ENABLE_QDRANT_MULTITENANCY_MODE=True`
+
+### Content Extraction Engine
+
+:::danger Default Content Extractor Causes Memory Leaks
+The **default content extraction engine** uses Python libraries including **pypdf**, which are known to have **persistent memory leaks** during document ingestion. In production deployments with regular document uploads, this will cause Open WebUI's memory usage to grow continuously until the process is killed or the container is restarted.
+
+This is the **#1 cause of unexplained memory growth** in production deployments.
+:::
+
+**Recommendation**: Switch to an external content extraction engine for any deployment that processes documents regularly:
+
+| Engine | Best For | Configuration |
+|---|---|---|
+| **Apache Tika** | General-purpose, widely used, handles most document types | `CONTENT_EXTRACTION_ENGINE=tika` + `TIKA_SERVER_URL=http://tika:9998` |
+| **Docling** | High-quality extraction with layout-aware parsing | `CONTENT_EXTRACTION_ENGINE=docling` |
+| **External Loader** | Recommended for production and custom extraction pipelines | `CONTENT_EXTRACTION_ENGINE=external` + `EXTERNAL_DOCUMENT_LOADER_URL=...` |
+
+Using an external extractor moves the memory-intensive parsing out of the Open WebUI process entirely, eliminating this class of memory leaks.
+
+### Embedding Engine
+
+:::warning SentenceTransformers at Scale
+The **default SentenceTransformers** embedding engine (all-MiniLM-L6-v2) loads a machine learning model into the Open WebUI process memory. While lightweight enough for personal use, at scale this model:
+
+- **Consumes significant RAM** (~500MB+ per worker process)
+- **Blocks the event loop** during embedding operations on older versions
+- **Multiplies with workers** — each Uvicorn worker loads its own copy of the model
+
+For multi-user or production deployments, **offload embeddings to an external service**.
+:::
+
+-   **Recommended**: Use `RAG_EMBEDDING_ENGINE=openai` (for cloud embeddings via OpenAI, Azure, or compatible APIs) or `RAG_EMBEDDING_ENGINE=ollama` (for self-hosted embedding via Ollama with models like `nomic-embed-text`).
+-   **Env Var**: `RAG_EMBEDDING_ENGINE=openai`
+-   **Effect**: The embedding model is no longer loaded into the Open WebUI process, freeing hundreds of MB of RAM per worker.
 
 ### Optimizing Document Chunking
 
@@ -148,10 +183,12 @@ The way your documents are chunked directly impacts both storage efficiency and 
 
 If you are deploying for **enterprise scale** (hundreds of users), simple Docker Compose setups may not suffice. You will need to move to a clustered environment.
 
+For a step-by-step walkthrough of the entire scaling journey (PostgreSQL, Redis, vector DB, storage, observability), see the **[Scaling Open WebUI](/getting-started/advanced-topics/scaling)** guide.
+
 *   **Kubernetes / Helm**: For deploying on K8s with multiple replicas, see the **[Multi-Replica & High Availability Guide](/troubleshooting/multi-replica)**.
 *   **Redis (Mandatory)**: When running multiple workers (`UVICORN_WORKERS > 1`) or multiple replicas, **Redis is required** to handle WebSocket connections and session syncing. See **[Redis Integration](/tutorials/integrations/redis)**.
 *   **Load Balancing**: Ensure your Ingress controller supports **Session Affinity** (Sticky Sessions) for best performance.
-*   **Reverse Proxy Caching**: Configure your reverse proxy (e.g., Nginx, Caddy, Cloudflare) to **cache static assets** (JS, CSS, Images). This significantly reduces load on the application server. See **[Nginx Config](/tutorials/https/nginx)** or **[Caddy Config](/tutorials/https/caddy)**.
+*   **Reverse Proxy Caching**: Configure your reverse proxy (e.g., Nginx, Caddy, Cloudflare) to **cache static assets** (JS, CSS, Images). This significantly reduces load on the application server. See **[Nginx Config](/reference/https/nginx)** or **[Caddy Config](/reference/https/caddy)**.
 *   **Disable Proxy Buffering (Critical for Streaming)**: If using Nginx, you **must** disable `proxy_buffering` for Open WebUI. Proxy buffering re-chunks SSE streams, causing garbled markdown and slow streaming. Add `proxy_buffering off;` and `proxy_cache off;` to your location block. See **[Streaming Troubleshooting](/troubleshooting/connection-error#-garbled-markdown--streaming-response-corruption)**.
 
 ---
@@ -176,7 +213,47 @@ Defines the number of worker threads available for handling requests.
 
 - **Env Var**: `THREAD_POOL_SIZE=2000`
 
+#### AIOHTTP Client Timeouts
+Long LLM completions can exceed default HTTP client timeouts. Configure these to prevent requests being cut off mid-response:
+
+- **Env Var**: `AIOHTTP_CLIENT_TIMEOUT=1800` (30 minutes for completions)
+- **Env Var**: `AIOHTTP_CLIENT_TIMEOUT_MODEL_LIST=15` (shorter for model listing)
+- **Env Var**: `AIOHTTP_CLIENT_TIMEOUT_OPENAI_MODEL_LIST=15`
+
+#### Container Resource Limits
+For Docker deployments, ensure adequate resource allocation:
+
+```yaml
+deploy:
+  resources:
+    limits:
+      memory: 8G      # Adjust based on usage
+      cpus: '4.0'
+    reservations:
+      memory: 4G
+      cpus: '2.0'
+
+# Increase file descriptor limits
+ulimits:
+  nofile:
+    soft: 65536
+    hard: 65536
+```
+
+**Diagnosis commands:**
+```bash
+# Check container resource usage
+docker stats openwebui --no-stream
+
+# Check connection states
+docker exec openwebui netstat -an | grep -E "ESTABLISHED|TIME_WAIT|CLOSE_WAIT" | sort | uniq -c
+
+# Check open file descriptors
+docker exec openwebui ls -la /proc/1/fd | wc -l
+```
+
 ---
+
 
 ## ☁️ Cloud Infrastructure Latency
 
@@ -316,33 +393,66 @@ If resource usage is critical, disable automated features that constantly trigge
 *Target: Many concurrent users, Stability > Persistence.*
 
 1.  **Database**: **PostgreSQL** (Mandatory).
-2.  **Workers**: `THREAD_POOL_SIZE=2000` (Prevent timeouts).
-3.  **Streaming**: `CHAT_RESPONSE_STREAM_DELTA_CHUNK_SIZE=7` (Reduce CPU/Net/DB writes).
-4.  **Chat Saving**: `ENABLE_REALTIME_CHAT_SAVE=False`.
-5.  **Vector DB**: **Milvus**, **Qdrant**, or **PGVector**. **Avoid ChromaDB.**
-6.  **Task Model**: External/Hosted (Offload compute).
-7.  **Caching**: `ENABLE_BASE_MODELS_CACHE=True`, `MODELS_CACHE_TTL=300`, `ENABLE_QUERIES_CACHE=True`.
+2.  **Content Extraction**: **Tika** or **Docling** (Mandatory — default pypdf leaks memory). See [Content Extraction Engine](#content-extraction-engine).
+3.  **Embeddings**: **External** — `RAG_EMBEDDING_ENGINE=openai` or `ollama` (Mandatory — default SentenceTransformers consumes too much RAM at scale). See [Embedding Engine](#embedding-engine).
+4.  **Tool Calling**: **Native Mode** (strongly recommended — Default Mode is legacy and breaks KV cache). See [Tool Calling Modes](/features/extensibility/plugin/tools#tool-calling-modes-default-vs-native).
+5.  **Workers**: `THREAD_POOL_SIZE=2000` (Prevent timeouts).
+6.  **Streaming**: `CHAT_RESPONSE_STREAM_DELTA_CHUNK_SIZE=7` (Reduce CPU/Net/DB writes).
+7.  **Chat Saving**: `ENABLE_REALTIME_CHAT_SAVE=False`.
+8.  **Vector DB**: **Milvus**, **Qdrant**, or **PGVector**. **Do not use ChromaDB's default local mode** — its SQLite backend will crash under multi-worker/multi-replica access.
+9.  **Task Model**: External/Hosted (Offload compute).
+10. **Caching**: `ENABLE_BASE_MODELS_CACHE=True`, `MODELS_CACHE_TTL=300`, `ENABLE_QUERIES_CACHE=True`.
+11. **Redis**: Single instance with `timeout 1800` and high `maxclients` (10000+). See [Redis Tuning](#redis-tuning) below.
+
+#### Redis Tuning
+
+A single Redis instance is sufficient for the vast majority of deployments, including those with thousands of users. **You almost certainly do not need Redis Cluster or Redis Sentinel** unless you have specific HA requirements.
+
+Common Redis configuration issues that cause unnecessary scaling:
+
+| Issue | Symptom | Fix |
+|---|---|---|
+| **Stale connections** | Redis runs out of connections or memory grows indefinitely | Set `timeout 1800` in redis.conf (kills idle connections after 30 minutes) |
+| **Low maxclients** | `max number of clients reached` errors | Set `maxclients 10000` or higher |
+| **No connection limits** | Open WebUI pods may accumulate connections that never close | Combine `timeout` with connection pool limits in your Redis client config |
+
+---
+
+## ⚠️ Common Anti-Patterns
+
+These are real-world mistakes that cause organizations to massively over-provision infrastructure:
+
+| Anti-Pattern | What Happens | Fix |
+|---|---|---|
+| **Using default content extractor in production** | pypdf leaks memory → containers restart constantly → you add more replicas to compensate | Switch to Tika or Docling (`CONTENT_EXTRACTION_ENGINE=tika`) |
+| **Running SentenceTransformers at scale** | Each worker loads ~500MB embedding model → RAM usage explodes → you add more machines | Use external embeddings (`RAG_EMBEDDING_ENGINE=openai` or `ollama`) |
+| **Redis Cluster when single Redis suffices** | Too many replicas → too many connections → Redis can't handle them → you deploy Redis Cluster to compensate | Fix the root cause (fewer replicas, `timeout 1800`, `maxclients 10000`) |
+| **Scaling replicas to mask memory leaks** | Leaky processes → OOM kills → auto-scaler adds more pods → more Redis connections → Redis overwhelmed | Fix the leaks first (content extraction, embedding engine), then right-size |
+| **Using Default (prompt-based) tool calling** | Injected prompts may break KV cache → higher latency → more resources needed per request | Switch to Native Mode for all capable models |
+| **Not configuring Redis stale connection timeout** | Connections accumulate forever → Redis OOM → you deploy Redis Cluster | Add `timeout 1800` to redis.conf |
+| **Using base64-encoded icons in Actions/Filters** | Icon data is embedded in `/api/models` responses sent to the frontend on every page load for every model. A 500 KB base64 icon on 3 actions across 20 models = **30 MB of payload bloat** per request → slow frontend loads, high bandwidth usage, unnecessary backend memory pressure | Host icons as static files and reference them by URL in `icon_url` / `self.icon`. See [Action Function icon_url warning](/features/extensibility/plugin/functions/action#example---specifying-action-frontmatter) |
 
 ---
 
 ## 🔗 Environment Variable References
 
-For detailed information on all available variables, see the [Environment Configuration](/getting-started/env-configuration) guide.
+For detailed information on all available variables, see the [Environment Configuration](/reference/env-configuration) guide.
 
 | Variable | Description & Link |
 | :--- | :--- |
-| `TASK_MODEL` | [Task Model (Local)](/getting-started/env-configuration#task_model) |
-| `TASK_MODEL_EXTERNAL` | [Task Model (External)](/getting-started/env-configuration#task_model_external) |
-| `ENABLE_BASE_MODELS_CACHE` | [Cache Model List](/getting-started/env-configuration#enable_base_models_cache) |
-| `MODELS_CACHE_TTL` | [Model Cache TTL](/getting-started/env-configuration#models_cache_ttl) |
-| `ENABLE_QUERIES_CACHE` | [Queries Cache](/getting-started/env-configuration#enable_queries_cache) |
-| `DATABASE_URL` | [Database URL](/getting-started/env-configuration#database_url) |
-| `ENABLE_REALTIME_CHAT_SAVE` | [Realtime Chat Save](/getting-started/env-configuration#enable_realtime_chat_save) |
-| `CHAT_RESPONSE_STREAM_DELTA_CHUNK_SIZE` | [Streaming Chunk Size](/getting-started/env-configuration#chat_response_stream_delta_chunk_size) |
-| `THREAD_POOL_SIZE` | [Thread Pool Size](/getting-started/env-configuration#thread_pool_size) |
-| `RAG_EMBEDDING_ENGINE` | [Embedding Engine](/getting-started/env-configuration#rag_embedding_engine) |
-| `AUDIO_STT_ENGINE` | [STT Engine](/getting-started/env-configuration#audio_stt_engine) |
-| `ENABLE_IMAGE_GENERATION` | [Image Generation](/getting-started/env-configuration#enable_image_generation) |
-| `ENABLE_AUTOCOMPLETE_GENERATION` | [Autocomplete](/getting-started/env-configuration#enable_autocomplete_generation) |
-| `RAG_SYSTEM_CONTEXT` | [RAG System Context](/getting-started/env-configuration#rag_system_context) |
-| `DATABASE_ENABLE_SESSION_SHARING` | [Database Session Sharing](/getting-started/env-configuration#database_enable_session_sharing) |
+| `TASK_MODEL` | [Task Model (Local)](/reference/env-configuration#task_model) |
+| `TASK_MODEL_EXTERNAL` | [Task Model (External)](/reference/env-configuration#task_model_external) |
+| `ENABLE_BASE_MODELS_CACHE` | [Cache Model List](/reference/env-configuration#enable_base_models_cache) |
+| `MODELS_CACHE_TTL` | [Model Cache TTL](/reference/env-configuration#models_cache_ttl) |
+| `ENABLE_QUERIES_CACHE` | [Queries Cache](/reference/env-configuration#enable_queries_cache) |
+| `DATABASE_URL` | [Database URL](/reference/env-configuration#database_url) |
+| `ENABLE_REALTIME_CHAT_SAVE` | [Realtime Chat Save](/reference/env-configuration#enable_realtime_chat_save) |
+| `CHAT_RESPONSE_STREAM_DELTA_CHUNK_SIZE` | [Streaming Chunk Size](/reference/env-configuration#chat_response_stream_delta_chunk_size) |
+| `THREAD_POOL_SIZE` | [Thread Pool Size](/reference/env-configuration#thread_pool_size) |
+| `RAG_EMBEDDING_ENGINE` | [Embedding Engine](/reference/env-configuration#rag_embedding_engine) |
+| `CONTENT_EXTRACTION_ENGINE` | [Content Extraction Engine](/reference/env-configuration#content_extraction_engine) |
+| `AUDIO_STT_ENGINE` | [STT Engine](/reference/env-configuration#audio_stt_engine) |
+| `ENABLE_IMAGE_GENERATION` | [Image Generation](/reference/env-configuration#enable_image_generation) |
+| `ENABLE_AUTOCOMPLETE_GENERATION` | [Autocomplete](/reference/env-configuration#enable_autocomplete_generation) |
+| `RAG_SYSTEM_CONTEXT` | [RAG System Context](/reference/env-configuration#rag_system_context) |
+| `DATABASE_ENABLE_SESSION_SHARING` | [Database Session Sharing](/reference/env-configuration#database_enable_session_sharing) |

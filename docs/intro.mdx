@@ -5,15 +5,14 @@ title: 🏡 Home
 hide_title: true
 ---
 
-import { TopBanners } from "@site/src/components/TopBanners";
+ 
 import { SponsorList } from "@site/src/components/SponsorList";
 
 # Open WebUI
 
 
-**Open WebUI is an [extensible](https://docs.openwebui.com/features/plugin/), feature-rich, and user-friendly self-hosted AI platform designed to operate entirely offline.** It is built around universal standards, supporting **Ollama** and **OpenAI-compatible Protocols** (specifically Chat Completions). This protocol-first approach makes it a powerful, provider-agnostic AI deployment solution for both local and cloud-based models.
+**Open WebUI is an [extensible](https://docs.openwebui.com/features/extensibility/plugin/), feature-rich, and user-friendly self-hosted AI platform designed to operate entirely offline.** It is built around universal standards, supporting **Ollama** and **OpenAI-compatible Protocols** (specifically Chat Completions). This protocol-first approach makes it a powerful, provider-agnostic AI deployment solution for both local and cloud-based models.
 
-[![Open WebUI Banner](/images/banner.png)](https://openwebui.com)
 
 Passionate about open-source AI? [Join our team →](https://careers.openwebui.com/)
 
@@ -38,13 +37,21 @@ Get **enhanced capabilities**, including **custom theming and branding**, **Serv
 
 :::
 
-<TopBanners />
-
 ## Quick Start with Docker 🐳
 
 :::info
 
 **WebSocket** support is required for Open WebUI to function correctly. Ensure that your network configuration allows WebSocket connections.
+
+:::
+
+:::tip Docker Hub Now Available
+
+Open WebUI images are now published to **both** registries:
+- **GitHub Container Registry:** `ghcr.io/open-webui/open-webui`
+- **Docker Hub:** `openwebui/open-webui`
+
+Both registries contain identical images. You can use either one — simply replace `ghcr.io/open-webui/open-webui` with `openwebui/open-webui` in any command below.
 
 :::
 
@@ -95,13 +102,15 @@ For `production environments` where stability and reproducibility are important,
 
 ```
 ghcr.io/open-webui/open-webui:<RELEASE_VERSION>-<TYPE>
+# or equivalently:
+openwebui/open-webui:<RELEASE_VERSION>-<TYPE>
 ```
 
 Examples (pinned versions for illustration purposes only):
 ```
-ghcr.io/open-webui/open-webui:v0.7.0
-ghcr.io/open-webui/open-webui:v0.7.0-ollama
-ghcr.io/open-webui/open-webui:v0.7.0-cuda
+ghcr.io/open-webui/open-webui:v0.8.6
+ghcr.io/open-webui/open-webui:v0.8.6-ollama
+ghcr.io/open-webui/open-webui:v0.8.6-cuda
 ```
 
 ### Using the Dev Branch 🌙
@@ -134,7 +143,7 @@ docker run -d -p 3000:8080 -v open-webui:/app/backend/data --name open-webui --r
 
 :::note Alternative: Local Development Setup
 
-If Docker doesn't work for your environment, you can also run the latest development code using the [Local Development Guide](/getting-started/advanced-topics/development). Conversely, if you prefer Docker over a local setup, the dev image is the easiest way to test.
+If Docker doesn't work for your environment, you can also run the latest development code using the [Local Development Guide](/getting-started/development). Conversely, if you prefer Docker over a local setup, the dev image is the easiest way to test.
 
 :::
 
@@ -151,7 +160,7 @@ Always use a separate data volume (e.g., `-v open-webui-dev:/app/backend/data`) 
 To update Open WebUI container easily, follow these steps:
 
 #### Manual Update
-Use [Watchtower](https://github.com/nickfedor/watchtower) to update your Docker container manually:
+Use [Watchtower](https://github.com/nicholas-fedor/watchtower) to update your Docker container manually:
 ```bash
 docker run --rm -v /var/run/docker.sock:/var/run/docker.sock nickfedor/watchtower --run-once open-webui
 ```

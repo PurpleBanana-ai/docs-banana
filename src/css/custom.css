@@ -30,12 +30,16 @@
 	--docusaurus-highlighted-code-line-bg: rgb(0 0 0 / 10%);
 	--ifm-hover-overlay: #fafafa;
 	--ifm-heading-color: #111;
-	--ifm-font-family-base: "Archivo";
-	--ifm-global-shadow-md: 0px; /* Remove shadow on the left */
+	--ifm-font-family-base:
+		"Archivo", -apple-system, blinkmacsystemfont, " Segoe UI", roboto,
+		" Helvetica Neue", arial, sans-serif;
+	--ifm-global-shadow-md: 0px;
+
+	/* Remove shadow on the left */
 }
 
 /** In mobile view, reduce the padding */
-@media screen and (width <= 996px) {
+@media screen and (width <=996px) {
 	:root {
 		--ifm-navbar-height: 100%;
 	}
@@ -317,7 +321,7 @@ article p a {
 	margin-top: 20px;
 }
 
-@media screen and (width >= 997px) {
+@media screen and (width >=997px) {
 	.hero--container {
 		padding: 80px 200px;
 	}
@@ -414,7 +418,7 @@ article p a {
 	background-color: #111;
 }
 
-@media screen and (width >= 997px) {
+@media screen and (width >=997px) {
 	.menu_node_modules-\@docusaurus-theme-classic-lib-theme-DocSidebar-Desktop-Content-styles-module {
 		padding: 0 !important;
 	}
@@ -429,7 +433,7 @@ article p a {
 }
 
 /* from here - https://theochu.com/docusaurus/styling/ */
-@media screen and (width <= 996px) {
+@media screen and (width <=996px) {
 	h1 {
 		font-size: 1.5rem !important;
 		font-weight: 600;
@@ -440,7 +444,7 @@ article p a {
 	}
 }
 
-@media screen and (width >= 997px) {
+@media screen and (width >=997px) {
 	h1 {
 		font-size: 2rem !important;
 	}
@@ -466,7 +470,7 @@ article p a {
 	font-size: inherit;
 }
 
-@media screen and (width >= 997px) {
+@media screen and (width >=997px) {
 	/* Show inline table of contents on mobile only */
 	div[class^="tableOfContentsInline"] {
 		display: none;
@@ -642,7 +646,7 @@ div.special_table + table tr:nth-child(even) {
 	gap: 0.25rem;
 }
 
-@media screen and (width >= 997px) {
+@media screen and (width >=997px) {
 	.header-github-link,
 	.header-discord-link {
 		font-size: 0;
