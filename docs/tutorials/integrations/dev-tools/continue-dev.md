@@ -1,15 +1,15 @@
 ---
-sidebar_position: 13
+sidebar_position: 10
 title: "Continue.dev"
 ---
+
+# Integrating Continue.dev VS Code Extension with Open WebUI
 
 :::warning
 
 This tutorial is a community contribution and is not supported by the Open WebUI team. It serves only as a demonstration on how to customize Open WebUI for your specific use case. Want to contribute? Check out the [contributing tutorial](/contributing).
 
 :::
-
-# Integrating Continue.dev VS Code Extension with Open WebUI
 
 ## Download Extension
 
@@ -164,7 +164,7 @@ apiBase: http://localhost:3000/api
 ### API Key
 
 To authenticate with your Open WebUI instance, you'll need to generate an API key.
-Follow the instructions in [this guide](https://docs.openwebui.com/reference/monitoring#authentication-setup-for-api-key-) to create it.
+Follow the instructions in the [API Endpoints guide](/reference/api-endpoints) to create it.
 
 ```yaml
 apiKey: YOUR_OPEN_WEBUI_API_KEY

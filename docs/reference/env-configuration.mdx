@@ -156,6 +156,12 @@ After the admin account is created, sign-up is automatically disabled for securi
 - Default: `True`
 - Description: Allows both password and SSO authentication methods to coexist when set to True. When set to False, it disables all password-based login attempts on the /signin and /ldap endpoints, enforcing strict SSO-only authentication. Disable this setting in production environments with fully configured SSO to prevent credential-based account takeover attacks; keep it enabled if you require password authentication as a backup or have not yet completed SSO configuration. Should never be disabled if OAUTH/SSO is not being used.
 
+:::tip
+
+This SHOULD be set to `False` if you only use SSO/OAUTH for Login and expose your Open WebUI publicly as to prevent password based logins.
+
+:::
+
 :::danger
 
 This should **only** ever be set to `False` when [ENABLE_OAUTH_SIGNUP](https://docs.openwebui.com/reference/env-configuration/#enable_oauth_signup)
@@ -306,7 +312,7 @@ is also being used and set to `True`. **Never disable this if OAUTH/SSO is not b
 #### `ENABLE_USER_WEBHOOKS`
 
 - Type: `bool`
-- Default: `True`
+- Default: `False`
 - Description: Enables or disables user webhooks.
 - Persistence: This environment variable is a `PersistentConfig` variable.
 
@@ -460,6 +466,18 @@ It is recommended to set this to a high single-digit or low double-digit value i
 
 :::
 
+#### `ENABLE_RESPONSES_API_STATEFUL`
+
+- Type: `bool`
+- Default: `False`
+- Description: Enables stateful session handling for the Responses API by forwarding `previous_response_id` to the upstream endpoint. When enabled, Open WebUI anchors each response to the previous one, allowing the upstream provider to maintain conversation state server-side.
+
+:::warning Experimental
+
+**Only enable this if your upstream Responses API endpoint supports stateful sessions** (i.e., server-side response storage with `previous_response_id` anchoring). Most proxies and third-party endpoints are stateless and **will break** if this is enabled. This is intended for direct connections to providers like OpenAI that natively support the Responses API with session state.
+
+:::
+
 #### `BYPASS_MODEL_ACCESS_CONTROL`
 
 - Type: `bool`
@@ -555,7 +573,7 @@ WEBUI_BANNERS="[{\"id\": \"1\", \"type\": \"warning\", \"title\": \"Your message
 
 - Type: `list` of `dict`
 - Default: `[]` (which means to use the built-in default prompt suggestions)
-- Description: Sets global default prompt suggestions shown to users when starting a new chat. These apply when no model-specific prompt suggestions are configured. Prompt suggestions can also be configured per-model via the Model Editor (see [Prompt Suggestions](/features/ai-knowledge/models#prompt-suggestions)), or globally for all models using the [Global Model Defaults](/features/ai-knowledge/models#global-model-defaults) feature. The format is:
+- Description: Sets global default prompt suggestions shown to users when starting a new chat. These apply when no model-specific prompt suggestions are configured. Prompt suggestions can also be configured per-model via the Model Editor (see [Prompt Suggestions](/features/workspace/models#prompt-suggestions)), or globally for all models using the [Global Model Defaults](/features/workspace/models#global-model-defaults-admin) feature. The format is:
 
 ```json
 [{"title": ["Title part 1", "Title part 2"], "content": "prompt"}]
@@ -615,6 +633,18 @@ See the [Model List Loading Issues](/troubleshooting/connection-error#️-model-
 - Type: `int`
 - Description: Sets the timeout in seconds for fetching the model list. This can be useful in cases where network latency requires a longer timeout duration to successfully retrieve the model list.
 
+#### `AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER`
+
+- Type: `int`
+- Default: Inherits `AIOHTTP_CLIENT_TIMEOUT` when unset
+- Description: Sets the timeout in seconds for executing tool server API calls (OpenAPI/MCP proxy calls made by Open WebUI). Use this to control how long Open WebUI waits for actual tool execution responses.
+
+:::info
+
+If this variable is unset or invalid, Open WebUI falls back to `AIOHTTP_CLIENT_TIMEOUT`.
+
+:::
+
 #### `AIOHTTP_CLIENT_SESSION_SSL`
 
 - Type: `bool`
@@ -625,7 +655,7 @@ See the [Model List Loading Issues](/troubleshooting/connection-error#️-model-
 
 - Type: `int`
 - Default: `10`
-- Description: Sets the timeout in seconds for retrieving data from tool servers via AIOHTTP client.
+- Description: Sets the timeout in seconds for retrieving tool server metadata/configuration (for example, loading server data/spec information).
 
 #### `AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL`
 
@@ -676,7 +706,7 @@ See the [Model List Loading Issues](/troubleshooting/connection-error#️-model-
 
 - Type: `str`
 - Default: Not set (plain-text logging)
-- Description: Controls the log output format. Set to `json` to switch all stdout logging to single-line JSON objects, suitable for log aggregators like Loki, Fluentd, CloudWatch, and Datadog. When set to `json`, the ASCII startup banner is also suppressed to keep the log stream parseable. Any other value (or unset) uses the default plain-text format. See the [JSON Logging documentation](/getting-started/advanced-topics/logging#-json-logging-log_format) for details on log fields and examples.
+- Description: Controls the log output format. Set to `json` to switch all stdout logging to single-line JSON objects, suitable for log aggregators like Loki, Fluentd, CloudWatch, and Datadog. When set to `json`, the ASCII startup banner is also suppressed to keep the log stream parseable. Any other value (or unset) uses the default plain-text format. See the [JSON Logging documentation](/getting-started/advanced-topics/logging#structured-json-logging) for details on log fields and examples.
 
 #### `ENABLE_AUDIT_STDOUT`
 
@@ -726,7 +756,17 @@ See the [Model List Loading Issues](/troubleshooting/connection-error#️-model-
 
 - Type: `str`
 - Default: `/chats,/chat,/folders`
-- Description: Comma-separated list of URL paths to exclude from audit logging. Paths are matched without leading slashes.RetryTo run code, enable code execution and file creation in Settings > Capabilities.Claude can make mistakes. Please double-check responses.
+- Description: Comma-separated list of URL paths to exclude from audit logging (blacklist mode). Paths are matched without leading slashes against `/api/` and `/api/v1/` prefixed routes. Ignored when `AUDIT_INCLUDED_PATHS` is set.
+
+#### `AUDIT_INCLUDED_PATHS`
+
+- Type: `str`
+- Default: Empty string (disabled)
+- Description: Comma-separated list of URL paths to include in audit logging (whitelist mode). When set, **only** matching paths are audited and `AUDIT_EXCLUDED_PATHS` is ignored. Paths are matched without leading slashes against `/api/` and `/api/v1/` prefixed routes. Auth endpoints (signin, signout, signup) are always logged regardless of filtering mode.
+
+:::tip Whitelist vs Blacklist
+By default, audit logging uses **blacklist mode** — all paths are logged except those in `AUDIT_EXCLUDED_PATHS`. If you set `AUDIT_INCLUDED_PATHS`, it switches to **whitelist mode** — only the specified paths are logged. If both are set, whitelist mode takes precedence and a warning is logged at startup.
+:::
 
 
 ### Ollama
@@ -1096,8 +1136,8 @@ The JSON data structure of `TOOL_SERVER_CONNECTIONS` might evolve over time as n
 
 - Type: `str` (JSON array)
 - Default: `[]`
-- Description: Specifies a JSON array of Open Terminal server connection configurations. Each connection defines the parameters needed to connect to an [Open Terminal](/features/extensibility/open-terminal) instance. Unlike user-level tool server connections, these are admin-configured and proxied through Open WebUI, which means the terminal URL and API key are never exposed to the browser. Supports group-based access control via `access_grants`.
-- Example:
+- Description: Specifies a JSON array of terminal server connection configurations. Each connection defines the parameters needed to connect to an [Open Terminal](/features/open-terminal) instance or a [Terminals orchestrator](/features/open-terminal/terminals/). Unlike user-level tool server connections, these are admin-configured and proxied through Open WebUI, which means the terminal URL and API key are never exposed to the browser. Supports group-based access control via `access_grants`.
+- Example (direct Open Terminal connection):
 ```json
 [
   {
@@ -1112,7 +1152,28 @@ The JSON data structure of `TOOL_SERVER_CONNECTIONS` might evolve over time as n
   }
 ]
 ```
+- Example (Terminals orchestrator connection):
+```json
+[
+  {
+    "id": "terminals",
+    "url": "http://terminals-orchestrator:8080",
+    "key": "your-api-key",
+    "name": "Terminals",
+    "auth_type": "bearer",
+    "config": {
+      "access_grants": [
+        {"principal_type": "user", "principal_id": "*", "permission": "read"}
+      ]
+    }
+  }
+]
+```
 - Persistence: This environment variable is a `PersistentConfig` variable.
+
+:::tip Helm chart auto-configuration
+When deploying on Kubernetes with the Open WebUI Helm chart and `terminals.enabled: true`, this variable is set automatically to point at the in-cluster orchestrator service. See the [Terminals (Orchestrator) guide](/features/open-terminal/terminals/) for details.
+:::
 
 :::warning
 
@@ -1292,11 +1353,11 @@ This variable replaces the deprecated `ENABLE_API_KEY` environment variable.
 
 :::info
 
-For API Key creation (and the API keys themselves) to work, you need **both**:
+For API Key creation (and the API keys themselves) to work:
 1. Enable API keys globally using this setting (`ENABLE_API_KEYS`)
-2. Grant the "API Keys" permission to users via Default Permissions or User Groups
+2. For non-admin users, grant the "API Keys" permission via Default Permissions or User Groups
 
-**Note:** Administrators are not exempt—they must also be granted the permission via a User Group to use API keys. See the [Authentication Setup for API Key](/reference/monitoring#authentication-setup-for-api-key-) guide for detailed setup instructions.
+**Note:** Administrators can generate API keys whenever `ENABLE_API_KEYS` is enabled, even without `features.api_keys`.
 
 :::
 
@@ -1781,7 +1842,7 @@ The default ChromaDB configuration uses a **local `PersistentClient`** backed by
 **This also applies to multi-replica deployments** (Kubernetes, Docker Swarm) where multiple containers point at the same ChromaDB data directory.
 
 If you need multiple workers or replicas, you **must** either:
-1. **Switch to a client-server vector database** such as [PGVector](/reference/env-configuration#pgvector_db_url), Milvus, or Qdrant (recommended).
+1. **Switch to a client-server vector database** such as [PGVector](/reference/env-configuration#pgvector_db_url), [MariaDB Vector](/reference/env-configuration#mariadb_vector_db_url), Milvus, or Qdrant (recommended).
 2. **Run ChromaDB as a separate HTTP server** and configure [`CHROMA_HTTP_HOST`](/reference/env-configuration#chroma_http_host) / [`CHROMA_HTTP_PORT`](/reference/env-configuration#chroma_http_port) so that Open WebUI uses an `HttpClient` instead of the local `PersistentClient`.
 
 See the [Scaling & HA guide](/troubleshooting/multi-replica) for full details.
@@ -2117,13 +2178,14 @@ If you want to use MariaDB Vector, be careful when upgrading Open WebUI (create 
 :::note
 
 MariaDB Dependencies
-To use `mariadb-vector`, ensure you have the MariaDB connector and system library installed:
+
+The `mariadb` Python connector is **not included by default** — it was removed from the bundled dependencies. To use `mariadb-vector`, you must install it explicitly:
 
 ```bash
 pip install open-webui[mariadb]
 ```
 
-The Docker image includes `libmariadb-dev` by default. For non-Docker deployments, you must install the MariaDB C connector library (`libmariadb-dev` on Debian/Ubuntu) before installing the Python driver.
+The official Docker image includes the system-level C library (`libmariadb-dev`) needed to compile the connector, so `pip install open-webui[mariadb]` will work inside the container without additional system packages. For non-Docker deployments, you must install the MariaDB C connector library (`libmariadb-dev` on Debian/Ubuntu) before installing the Python driver.
 
 :::
 
@@ -2829,7 +2891,7 @@ DOCLING_PARAMS="{\"do_ocr\": true, \"ocr_engine\": \"tesseract\", \"ocr_lang\": 
 
 - Type: `bool`
 - Default: `False`
-- Description: Enables the use of ensemble search with `BM25` + `ChromaDB`, with reranking using `sentence_transformers` models.
+- Description: Enables the use of ensemble search with `BM25` + `ChromaDB`, with reranking using `sentence_transformers` models. When enabled, this applies to both the standard RAG retrieval pipeline and the native knowledge tools used in agentic mode.
 - Persistence: This environment variable is a `PersistentConfig` variable.
 
 #### `RAG_HYBRID_BM25_WEIGHT`
@@ -3434,7 +3496,7 @@ This Tenant ID (also known as Directory ID) is required for the work/school inte
 
 - Type: `bool`
 - Default: `True`
-- Description: Enables or disables search query generation.
+- Description: Only used in Default Function Calling mode - If True: An LLM generates optimized, distilled search queries from the conversation context. If False: The user's last message is used verbatim as the web search query
 - Persistence: This environment variable is a `PersistentConfig` variable.
 
 #### `WEB_SEARCH_TRUST_ENV`
@@ -3477,6 +3539,13 @@ Allow only specific domains: WEB_FETCH_FILTER_LIST="example.com,trusted-site.org
 - Type: `int`
 - Default: `0`
 - Description: Limits the number of concurrent search requests to the search engine provider. Set to `0` for unlimited concurrency (default). Set to `1` for sequential execution to prevent rate limiting errors (e.g., Brave Free Tier).
+- Persistence: This environment variable is a `PersistentConfig` variable.
+
+#### `WEB_FETCH_MAX_CONTENT_LENGTH`
+
+- Type: `int`
+- Default: None (no limit)
+- Description: Maximum number of characters to return from fetched URLs. When set, content exceeding this limit is truncated. Previously hardcoded at 50,000 characters. Leave empty or unset to return full content without truncation. Useful for controlling context window usage with large web pages.
 - Persistence: This environment variable is a `PersistentConfig` variable.
 
 #### `WEB_LOADER_CONCURRENT_REQUESTS`
@@ -4421,7 +4490,7 @@ Strictly return in JSON format:
 
 :::tip
 
-For a detailed setup guide and example configuration, please refer to the [Gemini Image Generation Guide](/features/media-generation/image-generation-and-editing/gemini).
+For a detailed setup guide and example configuration, please refer to the [Gemini Image Generation Guide](/features/chat-conversations/image-generation-and-editing/gemini).
 
 :::
 
@@ -4799,22 +4868,32 @@ In any production environment running more than one instance of Open WebUI (e.g.
 - Default: `10`
 - Description: Maximum number of concurrent OAuth sessions allowed per user per provider. When a user logs in and the number of existing sessions for that user/provider combination meets or exceeds this limit, the oldest sessions are pruned to make room for the new one. This prevents unbounded session growth while allowing multi-device usage (e.g., logging in from a desktop and a mobile device without invalidating either session).
 
+#### `OAUTH_REFRESH_TOKEN_INCLUDE_SCOPE`
+
+- Type: `bool`
+- Default: `False`
+- Description: Ensures the full OAuth scope is included during refresh token requests instead of relying on provider defaults. When enabled, the configured scope (e.g. `MICROSOFT_OAUTH_SCOPE`) is passed to the identity provider during token refresh. This is required for providers like Microsoft where missing scopes can cause refresh failures, especially when using custom API scopes.
 
 #### `WEBUI_AUTH_TRUSTED_EMAIL_HEADER`
 
 - Type: `str`
-- Description: Defines the trusted request header for authentication. See [SSO docs](/features/access-security/auth/sso).
+- Description: Defines the trusted request header for authentication. See [SSO docs](/features/authentication-access/auth/sso).
 
 #### `WEBUI_AUTH_TRUSTED_NAME_HEADER`
 
 - Type: `str`
 - Description: Defines the trusted request header for the username of anyone registering with the
-`WEBUI_AUTH_TRUSTED_EMAIL_HEADER` header. See [SSO docs](/features/access-security/auth/sso).
+`WEBUI_AUTH_TRUSTED_EMAIL_HEADER` header. See [SSO docs](/features/authentication-access/auth/sso).
 
 #### `WEBUI_AUTH_TRUSTED_GROUPS_HEADER`
 
 - Type: `str`
-- Description: Defines the trusted request header containing a comma-separated list of group memberships for the user when using trusted header authentication. See [SSO docs](/features/access-security/auth/sso).
+- Description: Defines the trusted request header containing a comma-separated list of group memberships for the user when using trusted header authentication. See [SSO docs](/features/authentication-access/auth/sso).
+
+#### `WEBUI_AUTH_TRUSTED_ROLE_HEADER`
+
+- Type: `str`
+- Description: Defines the trusted request header that determines the user's role (`admin`, `user`, or `pending`) when using trusted header authentication. When set, the user's role is updated to match the header value on every sign-in. Invalid values are ignored with a warning. See [SSO docs](/features/authentication-access/auth/sso).
 
 ### Google
 
@@ -4851,6 +4930,23 @@ You must also set `OPENID_PROVIDER_URL` or otherwise logout may not work.
 - Default: `<backend>/oauth/google/callback`
 - Description: Sets the redirect URI for Google OAuth.
 - Persistence: This environment variable is a `PersistentConfig` variable.
+
+#### `GOOGLE_OAUTH_AUTHORIZE_PARAMS`
+
+- Type: `str` (JSON object)
+- Default: `{}`
+- Description: Adds Google-specific parameters to the OAuth `/authorize` request. Useful for Google flows that require extra parameters such as `prompt`, `login_hint`, or `hd`.
+
+```bash
+# Example (.env)
+GOOGLE_OAUTH_AUTHORIZE_PARAMS={"prompt":"consent","login_hint":"user@example.com","hd":"example.com"}
+```
+
+:::warning
+
+`GOOGLE_OAUTH_AUTHORIZE_PARAMS` must be valid JSON and must be a JSON object. If parsing fails, Open WebUI ignores it and logs a warning.
+
+:::
 
 ### Microsoft
 
@@ -5161,6 +5257,37 @@ If `OAUTH_PICTURE_CLAIM` is set to `''` (empty string), then the OAuth picture c
 :::info
 
 This is useful when you need a JWT access token for downstream validation or when your OAuth provider requires an audience hint for proper token generation. For Auth0, this is typically your API identifier (e.g., `https://your-api.auth0.com/api/v2/`). For Ory, specify the resource server you want to access.
+
+:::
+
+#### `OAUTH_AUTHORIZE_PARAMS`
+
+- Type: `str` (JSON object)
+- Default: `{}`
+- Description: Passes extra parameters directly to the OAuth provider's authorization endpoint during login. Use this when your provider requires custom authorize-time parameters that are not covered by dedicated variables.
+
+Common examples include parameters like `prompt`, `login_hint`, `domain_hint`, `resource`, `audience`, or provider-specific flags.
+
+```bash
+# Example (.env)
+OAUTH_AUTHORIZE_PARAMS={"prompt":"consent","login_hint":"user@example.com"}
+```
+
+```yaml
+# Example (docker-compose)
+environment:
+  - OAUTH_AUTHORIZE_PARAMS={"prompt":"consent","login_hint":"user@example.com"}
+```
+
+:::warning
+
+`OAUTH_AUTHORIZE_PARAMS` must be valid JSON and must be a JSON object (key/value map). If parsing fails, Open WebUI ignores it and logs a warning.
+
+:::
+
+:::info
+
+If you set both `OAUTH_AUDIENCE` and `OAUTH_AUTHORIZE_PARAMS` containing an `audience` key, the value from `OAUTH_AUTHORIZE_PARAMS` takes precedence.
 
 :::
 
@@ -5507,11 +5634,11 @@ This setting is compliant with [RFC 6749 Section 6](https://datatracker.ietf.org
 
 :::info
 
-For API Key creation (and the API keys themselves) to work, you need **both**:
-1. Grant the "API Keys" permission to users via this setting or User Groups
-2. Enable API keys globally using `ENABLE_API_KEYS`
+For API Key creation (and the API keys themselves):
+1. This setting controls API key creation permission for non-admin users (directly or via User Groups)
+2. API keys must also be globally enabled using `ENABLE_API_KEYS`
 
-**Note:** Administrators are not exempt—they must also be granted the permission via a User Group to use API keys. See the [Authentication Setup for API Key](/reference/monitoring#authentication-setup-for-api-key-) guide for detailed setup instructions.
+**Note:** Administrators can generate API keys whenever `ENABLE_API_KEYS` is enabled, even without `features.api_keys`. See the [Authentication Setup for API Key](/reference/monitoring#authentication-setup-for-api-key-) guide for detailed setup instructions.
 
 :::
 
@@ -5914,6 +6041,12 @@ pip install opentelemetry-api opentelemetry-sdk opentelemetry-exporter-otlp
 - Type: `str`
 - Default: Empty string (' ')
 - Description: Sets the password for basic authentication with the default OTLP endpoint. This applies to traces, and by default, to metrics and logs unless overridden by their specific authentication variables.
+
+#### `OTEL_METRICS_EXPORT_INTERVAL_MILLIS`
+
+- Type: `int`
+- Default: `10000` (10 seconds)
+- Description: Controls how often OpenTelemetry metrics are exported, in milliseconds. The default of 10 seconds produces approximately 6 data points per minute. Lower this value for higher resolution, or increase it to reduce cost on platforms that charge per data point (e.g. Grafana Cloud recommends staying below 1 DPM — set to `60000` for one export per minute).
 
 #### `OTEL_METRICS_BASIC_AUTH_USERNAME`
 

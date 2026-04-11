@@ -3,14 +3,13 @@ sidebar_position: 300
 title: "Offline Mode"
 ---
 
+# Running Open WebUI in offline mode 🔌
 
 :::warning
 
 This tutorial is a community contribution and is not supported by the Open WebUI team. It serves only as a demonstration on how to customize Open WebUI for your specific use case. Want to contribute? Check out the [contributing tutorial](/contributing).
 
 :::
-
-# Running Open WebUI in offline mode 🔌
 
 If you want to run Open WebUI in offline mode, you have to consider your installation approach and adjust your desired features accordingly. In this guide, we will go over the different ways of achieving a mostly similar setup to the online version.
 
@@ -74,7 +73,7 @@ Consider if you need to start the application offline from the beginning of your
 
 ### I: Speech-To-Text
 
-The local `whisper` installation does not include the model by default. In this regard, you can follow the [guide](/features/media-generation/audio/speech-to-text/stt-config) only partially if you want to use an external model/provider. To use the local `whisper` application, you must first download the model of your choice (e.g. [Huggingface - Systran](https://huggingface.co/Systran)).
+The local `whisper` installation does not include the model by default. In this regard, you can follow the [guide](/features/chat-conversations/audio/speech-to-text/stt-config) only partially if you want to use an external model/provider. To use the local `whisper` application, you must first download the model of your choice (e.g. [Huggingface - Systran](https://huggingface.co/Systran)).
 
 ```python
 from faster_whisper import WhisperModel

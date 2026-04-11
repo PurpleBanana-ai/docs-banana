@@ -1,17 +1,17 @@
 ---
-sidebar_position: 4100
-title: "Firefox AI Chatbot Sidebar"
+sidebar_position: 40
+title: "Firefox Sidebar"
 ---
+
+## 🦊 Firefox AI Chatbot Sidebar
+
+# Integrating Open WebUI as a Local AI Chatbot Browser Assistant in Mozilla Firefox
 
 :::warning
 
 This tutorial is a community contribution and is not supported by the Open WebUI team. It serves only as a demonstration on how to customize Open WebUI for your specific use case. Want to contribute? Check out the contributing tutorial.
 
 :::
-
-## 🦊 Firefox AI Chatbot Sidebar
-
-# Integrating Open WebUI as a Local AI Chatbot Browser Assistant in Mozilla Firefox
 
 ## Prerequisites
 
