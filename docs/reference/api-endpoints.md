@@ -9,6 +9,10 @@ This guide provides essential information on how to interact with the API endpoi
 
 To ensure secure access to the API, authentication is required 🛡️. You can authenticate your API requests using the Bearer Token mechanism. Obtain your API key from **Settings > Account** in the Open WebUI, or alternatively, use a JWT (JSON Web Token) for authentication. For full instructions on enabling and generating API keys - including the admin toggle and group permissions required for non-admin users - see [API Keys](/features/authentication-access/api-keys).
 
+:::tip Alternate credential header for proxy-heavy setups
+When Open WebUI is behind a reverse proxy that already uses the `Authorization` header for its own auth, you can deliver the API key via a custom header instead (`x-api-key` by default). Admins can rename the header via the [`CUSTOM_API_KEY_HEADER`](/reference/env-configuration#custom_api_key_header) environment variable to avoid collisions — see [Behind a reverse proxy that consumes `Authorization`?](/features/authentication-access/api-keys#behind-a-reverse-proxy-that-consumes-authorization) for the full pattern.
+:::
+
 ## Swagger Documentation Links
 
 :::important
@@ -193,23 +197,39 @@ Open WebUI accepts both **API keys** (prefixed with `sk-`) and **JWT tokens** fo
 
 #### Filter Execution
 
-| Filter Function | WebUI Request | Direct API Request |
-|----------------|--------------|-------------------|
-| `inlet()` | ✅ Runs | ✅ Runs |
-| `stream()` | ✅ Runs | ✅ Runs |
-| `outlet()` | ✅ Runs | ❌ **Does NOT run** |
+| Filter Function | WebUI Request | Direct API — stable (`main`) | Direct API — pre-release (`dev`) |
+|----------------|--------------|------------------------------|-----------------------------------|
+| `inlet()` | ✅ Runs | ✅ Runs | ✅ Runs |
+| `stream()` | ✅ Runs | ✅ Runs | ✅ Runs |
+| `outlet()` | ✅ Runs | ❌ Not called by `/api/chat/completions` — use `/api/chat/completed` | ⚠️ Runs inline only under narrow conditions (see below) |
 
 The `inlet()` function always executes, making it ideal for:
 - **Rate limiting** - Track and limit requests per user
 - **Request logging** - Log all API usage for monitoring
 - **Input validation** - Reject invalid requests before they reach the model
 
-#### Triggering Outlet Processing
+:::danger Outlet Behavior for Direct API Calls — Read Carefully
+Earlier versions of this page said `outlet()` runs inline during `/api/chat/completions` for both WebUI and API requests. That was wrong. The accurate picture, verified in the backend source, is:
 
-The `outlet()` function only runs when the WebUI calls `/api/chat/completed` after a chat finishes. For direct API requests, you must call this endpoint yourself if you need outlet processing:
+**On tagged releases / `main`:** `outlet()` is **not** invoked inline by `/api/chat/completions` at all. It only runs if the caller performs the second POST to `/api/chat/completed`. For now, if your integration needs `outlet()`, you must still do that second call.
+
+**On `dev` / pre-release builds:** `outlet()` can run inline after `/api/chat/completions`, but only when **all** of the following are true:
+
+1. The request body includes **both** `chat_id` **and** `id` (the assistant message id). If either is missing, the backend has no `event_emitter` and silently skips the outlet block.
+2. The `chat_id` is a chat the authenticated user already **owns**, otherwise the request 404s before the outlet path is reached. (Alternatively, send `parent_id: null` without a `chat_id` to trigger new-chat creation on the server.)
+3. The request is **non-streaming**. Streaming requests that satisfy (1) and (2) hit a code path designed for the WebUI: the server consumes the upstream stream itself and routes content to the user's WebSocket, so the HTTP response to a streaming API caller is effectively empty. Outlet runs, but you won't see its effect over HTTP.
+
+Even in the non-streaming case, **`outlet()` does not rewrite the HTTP response body**. It updates the persisted chat message and emits a `chat:outlet` WebSocket event, but the JSON your client receives is the pre-outlet content. If you need the outlet-filtered text, read it back from the chat record, subscribe to the WebSocket, or keep using `/api/chat/completed`.
+
+**Practical guidance:** if you are a pure API consumer (Continue.dev, Claude Code, custom scripts, Langfuse pipelines, etc.), treat `/api/chat/completed` as the supported way to run `outlet()` today. Inline execution on `dev` is primarily for WebUI-shaped clients that are already listening on the WebSocket.
+:::
+
+#### Legacy / Supported-for-API Endpoint: `/api/chat/completed`
+
+`POST /api/chat/completed` is the endpoint that reliably runs `outlet()` for direct API integrations. On `dev` it is marked deprecated in favor of inline execution, but as described above, inline execution does not currently return the filtered payload to pure API callers — so in practice `/api/chat/completed` remains the right call for most API integrations today.
 
 - **Endpoint**: `POST /api/chat/completed`
-- **Description**: Triggers outlet filter processing for a completed chat
+- **Description**: Runs `outlet()` filters (and pipeline outlet filters) unconditionally over a completed chat payload. Returns the filtered payload.
 
 - **Curl Example**:
 
@@ -235,8 +255,11 @@ The `outlet()` function only runs when the WebUI calls `/api/chat/completed` aft
 
   def complete_chat_with_outlet(token, model, messages, chat_id=None):
       """
-      Call after receiving the full response from /api/chat/completions
-      to trigger outlet filter processing.
+      Second-step call that actually runs outlet() for direct API callers.
+      On tagged releases /api/chat/completions does not run outlet inline at all.
+      On dev it runs inline only under narrow conditions and does not rewrite
+      the HTTP response body, so this endpoint is still the right call for
+      most API integrations that want outlet's output over HTTP.
       """
       url = 'http://localhost:3000/api/chat/completed'
       headers = {
@@ -255,7 +278,7 @@ The `outlet()` function only runs when the WebUI calls `/api/chat/completed` aft
   ```
 
 :::tip
-For more details on writing filters that work with API requests, see the [Filter Function documentation](/features/extensibility/plugin/functions/filter#-filter-behavior-with-api-requests).
+If you need `outlet()` output over HTTP today, call `/api/chat/completions` followed by `/api/chat/completed`. Inline execution on `dev` is primarily for WebUI-shaped clients that read from the WebSocket. For more details on filter behavior, see the [Filter Function documentation](/features/extensibility/plugin/functions/filter#-filter-behavior-with-api-requests).
 :::
 
 ### 🦙 Ollama API Proxy Support
@@ -299,6 +322,22 @@ curl -X POST http://localhost:3000/ollama/api/embed \
 :::info
 When using the Ollama Proxy endpoints, you **must** include the `Content-Type: application/json` header for POST requests, or the API may fail to parse the body. Authorization headers are also required if your instance is secured.
 :::
+
+#### 🔮 Responses API (OpenAI-Compatible)
+
+Ollama supports the OpenAI Responses API format. Open WebUI proxies this through the Ollama router with the same model resolution, access control, and prefix handling used by chat completions.
+
+```bash
+curl -X POST http://localhost:3000/ollama/v1/responses \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+  "model": "llama3.2",
+  "input": "Why is the sky blue?"
+}'
+```
+
+This allows API consumers (Codex, Claude Code, etc.) to use the Responses API directly with Ollama-hosted models without configuring a separate OpenAI-compatible connection.
 
 This is ideal for building search indexes, retrieval systems, or custom pipelines using Ollama models behind the Open WebUI.
 

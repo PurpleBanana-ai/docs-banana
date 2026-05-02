@@ -5,15 +5,21 @@ title: "Hardening Open WebUI"
 
 # Hardening Open WebUI
 
-Open WebUI is a self-hosted application built for private, trusted networks. It gives authenticated users access to powerful capabilities including model inference, tool execution, and code pipelines. The security model assumes that anyone who can reach the instance has been intentionally granted access by an administrator.
+Open WebUI is a self-hosted application that gives authenticated users access to model inference, tool execution, code pipelines, and more. Like other self-hosted infrastructure (databases, container registries, CI servers), the deploying organization manages its own environment, network exposure, and configuration. Open WebUI provides the controls described in this guide; how you configure them depends on your environment and threat model.
 
-This guide covers the configuration options available for hardening your deployment. Each section explains what a setting does, what the default is, and how to change it. It is not an exhaustive security guide, and securing your deployment is ultimately your responsibility. Your environment and threat model will determine which of these are relevant to you.
+This guide covers the configuration options available for hardening your deployment. Each section explains what a setting does, what the default is, and how to change it. It is not an exhaustive security guide, and securing your deployment is ultimately your responsibility. Your environment, compliance requirements, and threat model will determine which of these are relevant to you.
 
 :::tip Network Placement
 
-Open WebUI is built for private, trusted networks. While it can be made accessible over the public internet, doing so means relying solely on application-level authentication to protect access to your models, tools, and data. If you do expose it publicly, at minimum you should place it behind a VPN (WireGuard, Tailscale), a zero-trust proxy (Cloudflare Access, Pomerium), or a reverse proxy with authentication and IP allowlisting.
+Open WebUI is built for private, trusted networks, similar to other self-hosted infrastructure like databases, container registries, and CI servers. Most deployments run behind a corporate firewall, VPN, or other network boundary where access is limited to known users.
 
-DDoS protection and brute-force prevention (rate limiting on login endpoints, connection throttling, fail2ban) should also be handled at the proxy or network layer.
+For organizations where security is a priority, the recommended deployment places Open WebUI behind one or more of the following:
+
+- A VPN (WireGuard, Tailscale)
+- A zero-trust access proxy (Cloudflare Access, Pomerium)
+- A reverse proxy with authentication and IP allowlisting
+
+DDoS protection and brute-force prevention (rate limiting, connection throttling, fail2ban) should be handled at the proxy or network layer.
 
 :::
 
@@ -41,14 +47,9 @@ If you run multiple Open WebUI instances behind a load balancer, every instance 
 
 ### Registration
 
-By default, signup is open and the first user to register becomes the administrator. After your admin account exists, you can control registration:
+Signup is open only until the first user registers, who becomes the administrator. After that, signup is automatically disabled. No manual configuration is needed for this behavior.
 
-```bash
-# Disable new signups entirely
-ENABLE_SIGNUP=false
-```
-
-If you want to allow signups but require manual approval, leave signups enabled and rely on the default user role:
+The default role for new accounts is `pending`, which requires admin approval before a user can access any functionality. If an administrator chooses to re-enable signup (`ENABLE_SIGNUP=true`), the `pending` default ensures that new accounts still cannot access the system until explicitly approved.
 
 ```bash
 # New users are placed in "pending" status until an admin approves them (this is the default)
@@ -93,6 +94,14 @@ This removes the email/password form from the UI, steering all users through you
 ENABLE_PASSWORD_AUTH=false
 ```
 
+If you want to keep login-form behavior separate from account-page password updates, you can hide the password change form in **Settings > Account**:
+
+```bash
+ENABLE_PASSWORD_CHANGE_FORM=false
+```
+
+This is useful for SSO-focused deployments where local password changes should not be presented to users.
+
 ---
 
 ## Session and Cookie Security
@@ -125,7 +134,20 @@ Setting `JWT_EXPIRES_IN=-1` disables token expiration entirely. Open WebUI will 
 
 ### Token revocation
 
-With Redis configured, Open WebUI supports per-token revocation. When a user signs out, their token is added to a revocation list that auto-expires. Without Redis, tokens remain valid until they expire naturally.
+:::warning Token Revocation Requires Redis
+
+Without Redis, **signing out does not invalidate a user's token**. The token remains valid and usable until it expires naturally (default: 4 weeks). This means:
+
+- A stolen or leaked token cannot be revoked by signing out
+- Changing a user's password does not invalidate their existing sessions
+- Admin-initiated account deactivation does not immediately block access
+- OIDC back-channel logout cannot revoke tokens
+
+With Redis configured, Open WebUI supports per-token revocation. When a user signs out, changes their password, or is deactivated by an admin, their token is added to a revocation list that auto-expires. This is the intended production behavior.
+
+**If you cannot deploy Redis**, shorten `JWT_EXPIRES_IN` (e.g., `1h` or `4h`) to limit the window of exposure. See the [Redis tutorial](/tutorials/integrations/redis) for setup instructions.
+
+:::
 
 ---
 
@@ -179,11 +201,28 @@ PERMISSIONS_POLICY=camera=(),microphone=(),geolocation=()
 
 # Content Security Policy
 CONTENT_SECURITY_POLICY=default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'
+
+# Content Security Policy in report-only mode (logs violations without enforcing)
+CONTENT_SECURITY_POLICY_REPORT_ONLY=default-src 'self'; report-uri /csp-report
+
+# Cross-Origin isolation headers
+CROSS_ORIGIN_EMBEDDER_POLICY=require-corp    # Options: unsafe-none, require-corp, credentialless
+CROSS_ORIGIN_OPENER_POLICY=same-origin       # Options: unsafe-none, same-origin-allow-popups, same-origin
+CROSS_ORIGIN_RESOURCE_POLICY=same-origin     # Options: same-site, same-origin, cross-origin
+
+# Reporting API endpoint configuration
+REPORTING_ENDPOINTS=default="https://your-report-collector.example/reports"
 ```
 
 :::tip
 
-If you set a Content Security Policy, start permissive and tighten incrementally. An overly strict CSP will break the frontend. Browser dev tools will show you which resources are being blocked.
+If you set a Content Security Policy, start permissive and tighten incrementally. An overly strict CSP will break the frontend. Use `CONTENT_SECURITY_POLICY_REPORT_ONLY` to test a policy before enforcing it. Browser dev tools will show you which resources are being blocked.
+
+:::
+
+:::warning Cross-Origin Isolation
+
+Setting `CROSS_ORIGIN_EMBEDDER_POLICY=require-corp` and `CROSS_ORIGIN_OPENER_POLICY=same-origin` together enables cross-origin isolation. This may break resources loaded from third-party origins (e.g., external images, scripts, or iframes) unless those resources explicitly set appropriate CORS headers. Test thoroughly before deploying.
 
 :::
 
@@ -241,7 +280,7 @@ OAUTH_ALLOWED_ROLES=user,admin,superadmin
 OAUTH_MERGE_ACCOUNTS_BY_EMAIL=false
 ```
 
-When enabled, an OAuth login with an email matching an existing local account will merge the two. This is convenient but depends on your OAuth provider reliably verifying email addresses. If your provider does not guarantee email verification, a user who controls a matching email could gain access to the existing account.
+When enabled, an OAuth login with an email matching an existing local account will merge the two. **This is not recommended.** It depends on your OAuth provider reliably verifying email addresses. If your provider does not guarantee email verification, a user who controls a matching email could gain access to the existing account — effectively an account takeover. Keep this set to `false` unless you have verified that your provider enforces email verification.
 
 ### Session limits
 
@@ -257,7 +296,7 @@ ENABLE_OAUTH_BACKCHANNEL_LOGOUT=true
 
 ## Trusted Header Authentication
 
-If your reverse proxy handles authentication (Authelia, Authentik, oauth2-proxy), you can pass the authenticated identity to Open WebUI via HTTP headers:
+If your reverse proxy handles authentication (Authelia, Authentik, oauth2-proxy), you can pass the authenticated identity to Open WebUI via HTTP headers. **This is possible but risky depending on your setup** — incorrect configuration allows any client to authenticate as any user by forging the header:
 
 ```bash
 WEBUI_AUTH_TRUSTED_EMAIL_HEADER=X-Forwarded-Email
@@ -379,6 +418,14 @@ ENABLE_ADMIN_CHAT_ACCESS=true
 # Whether all users can access all models regardless of group restrictions (default: false)
 BYPASS_MODEL_ACCESS_CONTROL=false
 ```
+
+### OpenAI API passthrough
+
+```bash
+ENABLE_OPENAI_API_PASSTHROUGH=false
+```
+
+The OpenAI router includes a catch-all proxy endpoint (`/{path:path}`) that forwards any request to the upstream OpenAI-compatible API using the admin-configured API key. **This is disabled by default and should be kept disabled.** When enabled, any authenticated user can reach any upstream endpoint — including endpoints not natively handled by Open WebUI — using the admin's credentials and without model-level access control. Only enable this if you explicitly need direct passthrough to upstream API endpoints and understand the security implications.
 
 ### Data sharing and export
 
@@ -523,6 +570,8 @@ Tools and Functions run arbitrary Python code on your server with the same acces
 
 For details on the security model, see the [Security Policy](/security#tools-functions-and-pipelines-security).
 
+Because Tools and Functions execute server-side code, any user with permission to create or import them effectively has the same level of access as the Open WebUI process itself. This is inherent to how extensibility works. By default, only administrators can create and import Tools and Functions. The settings below control these permissions.
+
 ### Code execution
 
 Open WebUI has two code execution features enabled by default:
@@ -558,6 +607,8 @@ Tools and Functions can declare Python dependencies in their frontmatter. By def
 ENABLE_PIP_INSTALL_FRONTMATTER_REQUIREMENTS=false
 ```
 
+Disabling this prevents uploaded Tools from pulling in arbitrary packages at runtime. In production deployments, especially those where non-admin users can create Tools, this should be set to `false`.
+
 ### Workspace access
 
 Control who can create, import, and share Tools and Functions:
@@ -567,6 +618,8 @@ USER_PERMISSIONS_WORKSPACE_TOOLS_ACCESS=false
 USER_PERMISSIONS_WORKSPACE_TOOLS_IMPORT=false
 USER_PERMISSIONS_WORKSPACE_SKILLS_ACCESS=false
 ```
+
+All default to `false`, meaning only administrators can manage Tools and Functions. Keep these restrictive unless you have a specific need and trust the users being granted access.
 
 ---
 
@@ -641,7 +694,7 @@ The SCIM token is a static bearer token that grants full user management access.
 
 ## Keeping Open WebUI Updated
 
-Running the latest version of Open WebUI ensures you have the most recent security patches and fixes. Check the [changelog](https://github.com/open-webui/open-webui/releases) for security-related updates and apply them promptly.
+Running the latest version of Open WebUI helps keep your deployment up to date with the most recent security patches and fixes. Check the [changelog](https://github.com/open-webui/open-webui/releases) for security-related updates and apply them promptly.
 
 For Docker deployments, pull the latest image and recreate the container:
 
@@ -659,21 +712,80 @@ The table below summarizes the key hardening actions covered in this guide. Each
 
 | Action | Default | Recommended for production |
 |---|---|---|
-| [Keep on private network](#) | No restriction | VPN, firewall, or zero-trust proxy |
+| [Keep on private network](#hardening-open-webui) | No restriction | VPN, firewall, or zero-trust proxy |
 | [Serve over HTTPS](#https-and-tls) | HTTP | HTTPS via reverse proxy |
 | [Set `WEBUI_SECRET_KEY`](#secret-key) (multi-replica) | Auto-generated | Explicit shared key |
-| [Disable open signup](#registration) | `ENABLE_SIGNUP=true` | `ENABLE_SIGNUP=false` |
+| [Review signup policy](#registration) | Disabled after first user | Keep disabled or use `pending` role |
 | [Enable password validation](#password-validation) | Disabled | `ENABLE_PASSWORD_VALIDATION=true` |
 | [Secure cookies](#cookie-settings) | `Secure=false`, `SameSite=lax` | `Secure=true`, `SameSite=strict` |
+| [Enable token revocation](#token-revocation) | No revocation (no Redis) | Configure Redis or shorten `JWT_EXPIRES_IN` |
 | [Restrict CORS](#cors) | `*` | Your specific domain(s) |
-| [Set security headers](#security-headers) | None | HSTS, X-Frame-Options, CSP |
+| [Set security headers](#security-headers) | None | HSTS, X-Frame-Options, CSP, Cross-Origin policies |
 | [Restrict OAuth domains](#domain-and-group-restrictions) | All allowed | `OAUTH_ALLOWED_DOMAINS=yourdomain.com` |
 | [Enable audit logging](#audit-logging) | `NONE` | `METADATA` or higher |
 | [Restrict API key endpoints](#endpoint-restrictions) | All endpoints | `ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS=true` |
+| [Keep API passthrough disabled](#openai-api-passthrough) | Disabled | Keep `ENABLE_OPENAI_API_PASSTHROUGH=false` |
 | [Disable auto pip install](#dependency-installation) | Enabled | `ENABLE_PIP_INSTALL_FRONTMATTER_REQUIREMENTS=false` |
 | [Review community sharing](#data-sharing-and-export) | `true` | Disable if sensitive data |
 | [Review direct connections](#data-sharing-and-export) | `false` | Keep disabled unless needed |
 | [Use PostgreSQL](#postgresql) | SQLite | PostgreSQL |
 | [Verify outbound TLS](#outbound-tls) | Enabled | Keep enabled |
+| [Enable offline mode](#offline-mode) | Disabled | `OFFLINE_MODE=true` for air-gapped environments |
 | [Structured logging](#structured-logging) | Text | `LOG_FORMAT=json` |
 | [Keep updated](#keeping-open-webui-updated) | N/A | Latest stable release |
+
+---
+
+## Security-First Deployment
+
+For organizations where security is a priority, the following practices define the recommended deployment baseline. Each item addresses a distinct layer of the deployment, and together they provide defense in depth. Each item links to the relevant section above for detailed configuration.
+
+### Network and Transport
+
+1. **Place Open WebUI behind a VPN, reverse proxy, or zero-trust access layer with rate limiting and IP allowlisting.** Open WebUI is built for private, trusted networks. Do not expose it directly to the public internet without an additional access control layer in front of it. Configure your proxy to throttle connection rates, limit repeated authentication attempts, restrict access to known IP ranges, and use tools like fail2ban to block abusive sources. Restrict `--forwarded-allow-ips` to your proxy's IP to prevent header spoofing. [Details](#network-placement)
+
+2. **Serve all traffic over HTTPS and enable all security headers.** Use a reverse proxy that terminates TLS. Configure session cookies with `Secure=true` and `SameSite=strict`. Never serve Open WebUI over plain HTTP in production. Enable HSTS, Content Security Policy, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, and Permissions-Policy. Do not leave CORS set to `*`; restrict it to only the exact domains that need access. [Details](#https-and-tls)
+
+### Authentication and Access Control
+
+3. **Keep registration disabled.** Open WebUI automatically disables signup after the first user registers. The default role for any new account is `pending`, which requires explicit admin approval before the account can access any functionality. Do not re-enable open registration on instances that are accessible beyond a trusted network. [Details](#registration)
+
+4. **Use SSO with your identity provider and disable local authentication.** Integrate with your organization's OAuth/OIDC or LDAP provider. Restrict access to specific email domains and IdP groups, map IdP roles to Open WebUI roles, and disable the local login form and password authentication entirely. Limit concurrent sessions per user, enable backchannel logout with Redis so sessions are revoked immediately when users are deprovisioned, and do not enable OAuth account merging unless your provider guarantees email verification. [Details](#oauth-and-sso)
+
+5. **Enforce password complexity and shorten session lifetime.** If local accounts are used, enable password validation. Reduce the default JWT expiration from 4 weeks to a shorter duration appropriate for your environment (e.g., 8 to 24 hours). Do not disable token expiration in production. [Details](#password-validation)
+
+6. **Review user accounts and permissions periodically.** Remove inactive accounts, audit group memberships, and verify that workspace permissions remain appropriate. Use SCIM provisioning to automate account lifecycle management through your identity provider. [Details](#access-control)
+
+### Tools, Functions, and Extensions
+
+7. **Keep Tool and Function creation restricted to administrators and review all code before importing.** By default, only administrators can create, import, and manage Tools and Functions. Do not grant workspace permissions to untrusted users. Treat third-party Tools with the same scrutiny as any code running on your infrastructure. Never import Tools without reviewing their source code first. [Details](#tools-functions-and-pipelines)
+
+8. **Disable automatic dependency installation and disable code execution if not needed.** Set `ENABLE_PIP_INSTALL_FRONTMATTER_REQUIREMENTS=false` to prevent Tools from pulling in arbitrary packages at runtime. If your deployment does not require in-chat code execution, disable it entirely. If it is needed, keep the default `pyodide` engine, which runs in the browser, not on the server. Do not switch to the Jupyter engine without securing the Jupyter instance. Keep direct connections and direct tool servers disabled. [Details](#dependency-installation)
+
+### Data Protection
+
+9. **Restrict data sharing, file uploads, and API key access.** Set maximum file sizes, file count limits, and restrict allowed file extensions. Disable community sharing (`ENABLE_COMMUNITY_SHARING=false`) and admin bulk export (`ENABLE_ADMIN_EXPORT=false`) if not operationally needed. Keep API key creation restricted to administrators and enable endpoint restrictions to limit which routes each key can access. [Details](#data-sharing-and-export)
+
+10. **Encrypt data at rest and maintain regular backups.** For SQLite, use SQLCipher. For PostgreSQL, use disk-level or Transparent Data Encryption. Maintain regular backups, store them in a separate security domain, and periodically test your restore procedure. [Details](#sqlcipher)
+
+### Outbound Network Controls
+
+11. **Keep SSRF protections, outbound TLS verification, and network restrictions enabled.** Do not enable local web fetch. The default configuration blocks access to private IP ranges and cloud provider metadata endpoints; extend the blocklist to include internal domains specific to your environment. Do not disable certificate verification for outbound connections. For air-gapped environments, enable offline mode to disable all outbound calls. [Details](#ssrf-prevention)
+
+### Supply Chain and Change Management
+
+12. **Use official container images, or build from source.** Pull images from `ghcr.io/open-webui/open-webui` or `openwebui/open-webui` on Docker Hub. For full supply chain control, build directly from [source](https://github.com/open-webui/open-webui) using the provided Dockerfile. Do not use unofficial or third-party images. [Details](#container-hardening)
+
+13. **Pin to a specific release version and validate updates before deploying.** Use a tagged release rather than `:main` or `:latest`. Review changelogs before upgrading. Validate new versions in a staging environment before rolling them out to production, and maintain the ability to roll back. Do not auto-update production deployments. [Details](#keeping-open-webui-updated)
+
+### Container and Infrastructure
+
+14. **Run as non-root with minimal capabilities on a segmented network.** Use a non-root UID/GID, read-only filesystem mounts where possible, drop all unnecessary Linux capabilities, and set `--security-opt=no-new-privileges`. Apply restrictive permissions (e.g., `0700`) to the data directory. Use PostgreSQL with strong credentials on a separate network segment, not accessible from the public internet. [Details](#non-root-execution)
+
+### Observability and Incident Response
+
+15. **Enable audit logging at METADATA level or higher and forward to your SIEM.** Always audit authentication endpoints. Configure retention and forward logs to your organization's log aggregation infrastructure. Use JSON log format and enable OpenTelemetry for distributed tracing if supported. [Details](#audit-logging)
+
+16. **Monitor for anomalies.** Track CPU, memory, network, and disk usage. Integrate with your alerting infrastructure to detect unexpected compute usage, outbound network activity, or storage consumption early. [Details](#observability)
+
+17. **Maintain an incident response plan.** Define procedures for compromised accounts, unauthorized access, and unexpected resource consumption. Know how to disable user accounts, revoke sessions (requires Redis), rotate the secret key, and review audit logs.

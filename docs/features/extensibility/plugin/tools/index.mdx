@@ -85,7 +85,7 @@ While chatting, click the **➕ (plus)** icon in the input area. You’ll see a 
 4. ✅ Check the Tools you want this model to always have access to by default.
 5. Click **Save**.
 
-You can also let your LLM auto-select the right Tools using the [**AutoTool Filter**](https://openwebui.com/f/hub/autotool_filter/).
+For models that support it, **Native tool calling mode** (see [Tool Calling Modes](#tool-calling-modes-default-vs-native) below) lets the model itself decide which of the attached tools to call on each turn. This replaces the older prompt-injection "auto-tool" filter approach and is the recommended way to let the model auto-select tools.
 
 :::caution Attached Tools Still Require User Access
 Attaching a workspace tool to a model does **not** bypass access control. When a user chats with the model, Open WebUI checks whether **that specific user** has read access to each attached tool. Tools the user cannot access are silently skipped — the model won't be able to call them.
@@ -99,23 +99,30 @@ Attaching a workspace tool to a model does **not** bypass access control. When a
 
 ## Tool Calling Modes: Default vs. Native
 
-Open WebUI offers two distinct ways for models to interact with tools: a standard **Default Mode** and a high-performance **Native Mode (Agentic Mode)**. Choosing the right mode depends on your model's capabilities and your performance requirements.
+:::danger Default Mode Is Legacy and No Longer Supported — Use Native Mode
+**All models should be configured for Native (Agentic) Mode.** Default Mode is a legacy prompt-injection fallback that predates widespread native function-calling support in LLMs. It is **no longer supported**: it will not receive feature work, bug fixes, or built-in system tools, and it is incompatible with modern Open WebUI features (Agentic Research, Interleaved Thinking, built-in Memory/Notes/Knowledge/Channels tools, web-search/image-gen/code-interpreter tool injection).
 
-### 🟡 Default Mode (Prompt-based) — Legacy
-
-:::warning Legacy Mode
-Default Mode is maintained purely for **backwards compatibility** with older or smaller models that lack native function-calling support. It is considered **legacy** and should not be used when your model supports native tool calling. New deployments should use **Native Mode** exclusively.
+Default Mode still exists in the dropdown only so that instances with older tool code paths keep running while admins migrate. If your deployment is still on Default Mode, switch every model to Native Mode (see [How to Enable Native Mode](#how-to-enable-native-mode-agentic-mode) below). If a specific model has trouble with Native Mode, the correct fix is to pick a better model for tool calling — not to fall back to Default.
 :::
 
-In Default Mode, Open WebUI manages tool selection by injecting a specific prompt template that guides the model to output a tool request.
-- **Compatibility**: Works with **practically any model**, including older or smaller local models that lack native function-calling support.
-- **Flexibility**: Highly customizable via prompt templates.
-- **Caveats**:
-  - Can be slower (requires extra tokens) and less reliable for complex, multi-step tool chaining.
-  - **Breaks KV cache**: The injected prompt changes every turn, preventing LLM engines from reusing cached key-value pairs. This increases latency and cost for every message in the conversation.
-  - Does not support built-in system tools (memory, notes, channels, etc.).
+Open WebUI exposes two modes in **Model Settings → Advanced Params → Function Calling**: **Native Mode (Agentic Mode)** — the only supported mode — and **Default Mode**, kept in the UI for backwards compatibility only.
 
-### 🟢 Native Mode (Agentic Mode / System Function Calling) — Recommended
+### 🔴 Default Mode (Prompt-based) — Legacy / Unsupported
+
+:::warning Unsupported
+Default Mode is **legacy and no longer supported**. It is documented here for reference only. New deployments must use Native Mode; existing deployments should migrate. Bug reports, feature requests, and support questions about Default Mode behavior will not be actioned.
+:::
+
+In Default Mode, Open WebUI manages tool selection by injecting a long prompt template that guides the model to output a tool request in a bespoke format. It was a reasonable approach in 2023; it has been obsolete since mainstream providers and open-weights models gained proper function-calling APIs.
+
+Why it is legacy:
+- **Breaks KV cache.** The injected prompt changes every turn, preventing LLM engines from reusing cached key-value pairs. Every message pays the full prefill cost again.
+- **Higher latency and token cost.** Bulky tool-description prompts on every turn.
+- **Unreliable for multi-step chaining.** Parsing natural-language tool requests is fragile compared to structured tool calls.
+- **Cannot access built-in system tools.** Memory, Notes, Knowledge, Channels, Agentic Research, Interleaved Thinking, and the tool-injected Web Search / Image Generation / Code Interpreter features are **Native-only**.
+- **Does not support modern capabilities.** Every new feature shipped since 2024 targets Native Mode.
+
+### 🟢 Native Mode (Agentic Mode / System Function Calling) — The Only Supported Mode
 Native Mode (also called **Agentic Mode**) leverages the model's built-in capability to handle tool definitions and return structured tool calls (JSON). This is the **recommended mode** for all models that support it — which includes the vast majority of modern models (2024+).
 
 :::warning Model Quality Matters
@@ -133,13 +140,22 @@ Native Mode (also called **Agentic Mode**) leverages the model's built-in capabi
 #### How to Enable Native Mode (Agentic Mode)
 Native Mode can be enabled at two levels:
 
-1.  **Global/Administrator Level (Recommended)**:
-    *   Navigate to **Admin Panel > Settings > Models**.
-    *   Scroll to **Model Specific Settings** for your target model.
-    *   Under **Advanced Parameters**, find the **Function Calling** dropdown and select `Native`.
-2.  **Per-Chat Basis**:
-    *   Inside a chat, click the ⚙️ **Chat Controls** icon.
-    *   Go to **Advanced Params** and set **Function Calling** to `Native`.
+1.  **Universal Default for Every Model (Fastest — Recommended)**:
+    *   Navigate to **Admin Panel → Settings → Models**.
+    *   Click the **Settings** button at the **top right** of the models list — this opens **global model parameters**, which apply to *every* model in your instance (current and future) unless a specific model overrides them.
+    *   Under **Model Parameters**, set **Function Calling** to `Native`.
+    *   Save. All existing models that haven't explicitly set their own value, and all models you add later, inherit `Native`. You do **not** need to edit them one by one.
+2.  **Per-Model Override**:
+    *   In **Admin Panel → Settings → Models**, pick a specific model and click its edit button.
+    *   Under **Model Parameters**, set **Function Calling** to `Native`. This value overrides the global default for that model only.
+    *   Use this when a specific model needs different parameters — otherwise prefer the global setting.
+3.  **Per-Chat Override**:
+    *   Inside a chat, open **Chat Controls** (right sidebar).
+    *   Under **Advanced Params**, set **Function Calling** to `Native`. Applies to that chat only.
+
+:::tip Set Function Calling Globally — Once, For All Models
+Tired of switching every model to Native one at a time? The **global model parameters** panel (the **Settings** button at the top right of **Admin Panel → Settings → Models**) lets you configure any model parameter — `function_calling`, temperature, top_p, max_tokens, etc. — **once, for every model in your Open WebUI instance**. Values set there become the default for every existing model that hasn't overridden them *and* every model you add later. Set `Function Calling = Native` there, save, done.
+:::
 
 ![Chat Controls](/images/features/plugin/tools/chat-controls.png)
 
@@ -157,8 +173,8 @@ For reliable agentic tool calling, use high-tier frontier models:
 These models excel at multi-step reasoning, proper JSON formatting, and autonomous tool selection.
 :::
 
-- **Large Local Models**: Some large local models (e.g., Qwen 3 32B, Llama 3.3 70B) can work with Native Mode, but results vary significantly by model quality.
-- **Small Local Models Warning**: **Small local models** (under 30B parameters) often struggle with Native Mode. They may produce malformed JSON, fail to follow strict state management, or make poor tool selection decisions. For these models, **Default Mode** is usually more reliable.
+- **Large Local Models**: Large local models (e.g., Qwen 3 32B, Llama 3.3 70B, DeepSeek V3/R1) work well with Native Mode; results scale with model quality.
+- **Small Local Models**: Small local models (under ~30B parameters) often produce malformed JSON or fail multi-step tool chains even in Native Mode. **The fix is to use a stronger model for tool-calling workloads**, not to fall back to Default Mode — Default is legacy and unsupported. If your hardware forces you to use a small model, accept that tool calling will be unreliable at this tier, or offload only tool-using conversations to a cloud model.
 
 #### Known Model-Specific Issues
 
@@ -178,23 +194,24 @@ These models excel at multi-step reasoning, proper JSON formatting, and autonomo
 - Complex multi-step workflows (15-30 tool calls) may cause "schema drift" where argument formats degrade
 
 **Workarounds**:
-- **Use Default Mode** (prompt-based) instead of Native Mode for DeepSeek — this is the recommended approach
-- Lower temperature when using tool calling
-- Limit multi-round tool calling sessions
-- Consider alternative models for agentic workflows
+- **Use a different model for agentic workloads.** Claude 4.5 Sonnet, GPT-5, Gemini 3 Flash, and MiniMax M2.5 are all reliable in Native Mode and are the recommended choice when DeepSeek V3.2 misbehaves.
+- Lower temperature when using tool calling with DeepSeek V3.2.
+- Limit multi-round tool-calling sessions.
 
-**This is a DeepSeek model/API issue**, not an Open WebUI issue. Open WebUI correctly sends tools in standard OpenAI format — the malformed output originates from DeepSeek's non-standard internal format.
+Default Mode is **not** a supported workaround even for DeepSeek — it is legacy and will not be extended to cover this case. This is a DeepSeek model/API issue, not an Open WebUI issue. Open WebUI correctly sends tools in standard OpenAI format; the malformed output originates from DeepSeek's non-standard internal DSML format.
 :::
 
-| Feature | Default Mode (Legacy) | Native Mode (Recommended) |
+| Feature | Default Mode (Legacy / Unsupported) | Native Mode (The Only Supported Mode) |
 |:---|:---|:---|
-| **Status** | Legacy / backwards compat | ✅ Recommended |
+| **Status** | ❌ Legacy, no longer supported | ✅ Required — all models should use this |
 | **Latency** | Medium/High | Low |
-| **KV Cache** | ❌ Can break cache | ✅ Cache-friendly |
-| **Model Compatibility** | Universal | Requires Tool-Calling Support |
-| **Logic** | Prompt-based (Open WebUI) | Model-native (API/Ollama) |
-| **System Tools** | ❌ Not available | ✅ Full access |
-| **Complex Chaining** | ⚠️ Limited | ✅ Excellent |
+| **KV Cache** | ❌ Breaks cache on every turn | ✅ Cache-friendly |
+| **Model Compatibility** | Any text model (obsolete concern) | Every mainstream model since 2024 |
+| **Logic** | Prompt-injection parsed by Open WebUI | Structured tool calls via provider API |
+| **System Tools** | ❌ Not available | ✅ Full access (Memory, Notes, Knowledge, Channels, Web Search, Image Gen, Code Interpreter) |
+| **Agentic Research / Interleaved Thinking** | ❌ Unsupported | ✅ Supported |
+| **Complex Chaining** | ⚠️ Unreliable | ✅ Excellent |
+| **Future development** | ❌ None | ✅ All new features target this mode |
 
 ### Built-in System Tools (Native/Agentic Mode)
 
@@ -238,6 +255,20 @@ These models excel at multi-step reasoning, proper JSON formatting, and autonomo
 | `search_channel_messages` | Search for specific messages inside accessible channels. |
 | `view_channel_message` | View a specific message or its details in a channel. |
 | `view_channel_thread` | View a full message thread/replies in a channel. |
+| **Task Management** | *Requires per-model "Task Management" category enabled (default: on).* |
+| `create_tasks` | Create a structured task checklist for the current chat. Called once at the start of multi-step work to define all steps. |
+| `update_task` | Update the status of a single task by id (`pending`, `in_progress`, `completed`, `cancelled`). Called after finishing each step. |
+| **Automations** | *Requires per-model "Automations" category enabled (default: on) AND `ENABLE_AUTOMATIONS` enabled AND user has `features.automations` permission (admins always pass).* |
+| `create_automation` | Create a scheduled automation with a name, prompt, and RRULE schedule. Uses the current chat model. |
+| `update_automation` | Update an existing automation's name, prompt, schedule, or model. |
+| `list_automations` | List the user's scheduled automations with status, schedule, and next runs. |
+| `toggle_automation` | Pause or resume a scheduled automation. |
+| `delete_automation` | Delete a scheduled automation and all its run history. |
+| **Calendar** | *Requires per-model "Calendar" category enabled (default: on) AND `ENABLE_CALENDAR` enabled AND user has `features.calendar` permission (admins always pass).* |
+| `search_calendar_events` | Search calendar events by text and/or date range across all accessible calendars. |
+| `create_calendar_event` | Create a new event on the user's default or specified calendar. |
+| `update_calendar_event` | Update an existing event's title, time, description, location, or cancel it. |
+| `delete_calendar_event` | Delete a calendar event permanently. |
 | **Skills** | *Requires at least one skill to be attached to the model via **Workspace/Admin Panel → Models → Edit → Skills**. The model receives a summary of attached skills in its system prompt and can call `view_skill` to load full instructions on demand. No separate builtin tools category checkbox is needed — attaching a skill is the only requirement.* |
 | `view_skill` | Load the full instructions of a skill by name. The tool is injected when skills are attached; resolving a skill still follows normal ownership/access-grant checks. |
 | **Time Tools** | *Requires per-model "Time & Calculation" category enabled (default: on).* |
@@ -267,7 +298,7 @@ Quick rule: `list_knowledge` and `list_knowledge_bases` are mutually exclusive.
 | Tool | Parameters | Output |
 |------|------------|--------|
 | **Search & Web** | | |
-| `search_web` | `query` (required), `count` (default: 5) | Array of `{title, link, snippet}` |
+| `search_web` | `query` (required), `count` (default: admin-configured `WEB_SEARCH_RESULT_COUNT`; capped at admin maximum when provided) | Array of `{title, link, snippet}` |
 | `fetch_url` | `url` (required) | Plain text content (max 50,000 chars) |
 | **Knowledge Base** | | |
 | `list_knowledge` | None | `{knowledge_bases: [{id, name, description, file_count, files: [{id, filename}]}], files: [{id, filename}], notes: [{id, title}]}` |
@@ -302,6 +333,20 @@ Quick rule: `list_knowledge` and `list_knowledge_bases` are mutually exclusive.
 | `search_channel_messages` | `query` (required), `count` (default: 10), `start_timestamp`, `end_timestamp` | Array of `{channel_id, channel_name, message_id, content_snippet, is_thread_reply, parent_id, created_at}` |
 | `view_channel_message` | `message_id` (required) | `{id, content, user_name, created_at, reply_count}` |
 | `view_channel_thread` | `parent_message_id` (required) | `{channel_id, channel_name, thread_id, message_count, messages: [...]}` |
+| **Task Management** | | |
+| `create_tasks` | `tasks` (required): list of `{content (required), status (default: pending), id (optional, auto-generated)}` | `{tasks: [...], summary: {total, pending, in_progress, completed, cancelled}}` |
+| `update_task` | `id` (required), `status` (default: `completed`; one of `pending`, `in_progress`, `completed`, `cancelled`) | `{tasks: [...], summary: {total, pending, in_progress, completed, cancelled}}` |
+| **Automations** | | |
+| `create_automation` | `name` (required), `prompt` (required), `rrule` (required) | `{status, id, name, model_id, is_active, next_runs}` |
+| `update_automation` | `automation_id` (required), `name`, `prompt`, `rrule`, `model_id` (all optional — only provided fields are changed) | `{status, id, name, model_id, is_active, next_runs}` |
+| `list_automations` | `status` (optional: `"active"`, `"paused"`, or omit for all), `count` (default: 10) | `{automations: [{id, name, prompt_snippet, model_id, rrule, is_active, last_run_at, next_runs}], total}` |
+| `toggle_automation` | `automation_id` (required) | `{status, id, name, is_active}` |
+| `delete_automation` | `automation_id` (required) | `{status, message}` |
+| **Calendar** | | |
+| `search_calendar_events` | `query` (optional), `start` (optional datetime string, e.g. `"2026-04-20 00:00"`), `end` (optional datetime string), `count` (default: 10) | `{events: [{id, calendar_id, title, description, start, end, all_day, location, color, is_cancelled}], total}` |
+| `create_calendar_event` | `title` (required), `start` (required datetime string), `end` (optional), `description` (optional), `calendar_id` (optional — uses default calendar), `all_day` (default: false), `location` (optional) | `{status, id, calendar_id, title, start, end, ...}` |
+| `update_calendar_event` | `event_id` (required), `title`, `description`, `start`, `end`, `all_day`, `location`, `is_cancelled` (all optional — only provided fields are changed) | `{status, id, title, start, end, ...}` |
+| `delete_calendar_event` | `event_id` (required) | `{status, message}` |
 | **Skills** | | |
 | `view_skill` | `name` (required) | `{name, content}` |
 | **Time Tools** | | |
@@ -403,6 +448,9 @@ When the **Builtin Tools** capability is enabled, you can further control which 
 | **Image Generation** | `generate_image`, `edit_image` | Generate and edit images |
 | **Code Interpreter** | `execute_code` | Execute code in a sandboxed environment |
 | **Channels** | `search_channels`, `search_channel_messages`, `view_channel_message`, `view_channel_thread` | Search channels and channel messages |
+| **Task Management** | `create_tasks`, `update_task` | Create a structured task/todo list and update individual task statuses in the active chat |
+| **Automations** | `create_automation`, `update_automation`, `list_automations`, `toggle_automation`, `delete_automation` | Create and manage scheduled automations from chat |
+| **Calendar** | `search_calendar_events`, `create_calendar_event`, `update_calendar_event`, `delete_calendar_event` | Search, create, update, and delete calendar events |
 
 All categories are **enabled by default**. Disabling a category prevents those specific tools from being injected, while keeping other categories active.
 
@@ -431,6 +479,23 @@ These per-category toggles only appear when the main **Builtin Tools** capabilit
 
 :::info Global Features Take Precedence
 Enabling a per-model category toggle does **not** override global feature flags. For example, if `ENABLE_NOTES` is disabled globally (Admin Panel), Notes tools will not be available even if the "Notes" category is enabled for the model. The per-model toggles only allow you to *further restrict* what's already available—they cannot enable features that are disabled at the global level.
+:::
+
+:::warning User-Level Permissions Also Apply
+Builtin tools that correspond to an RBAC feature permission are also gated by the user's **Features** permissions. Even if a tool category is enabled on the model and the global feature flag is on, the tool will **not** be injected if the user lacks the corresponding `features.*` permission. Admins always pass these checks.
+
+| Tool Category | Required `features.*` Permission |
+|---------------|----------------------------------|
+| Memory | `features.memories` |
+| Web Search | `features.web_search` |
+| Image Generation | `features.image_generation` |
+| Code Interpreter | `features.code_interpreter` |
+| Notes | `features.notes` |
+| Channels | `features.channels` |
+| Automations | `features.automations` |
+| Calendar | `features.calendar` |
+
+This ensures that RBAC permissions are respected end-to-end — disabling a feature for a user prevents the model from calling those tools on their behalf, not just hiding the UI.
 :::
 
 :::tip Per-Chat Feature Toggles (Web Search, Image Generation, Code Interpreter)
@@ -472,6 +537,8 @@ This is fundamentally different from a single-shot tool call. In an interleaved 
 5.  **Finalize**: Only after completing this "Deep Research" cycle does the model provide a final, grounded answer.
 
 This behavior is what transforms a standard chatbot into an **Agentic AI** capable of solving complex, multi-step problems autonomously.
+
+For long-running workflows, combine interleaved tool use with `create_tasks` (to lay out the plan upfront) and `update_task` (to mark each step done as work progresses) so the model can plan explicitly, track progress, and keep users aligned on next actions.
 
 ---
 

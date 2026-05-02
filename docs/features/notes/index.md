@@ -41,6 +41,7 @@ With [native function calling](/features/extensibility/plugin/tools#tool-calling
 | 🤖 **AI Enhance** | Rewrite or improve selected text in place |
 | 💬 **Chat sidebar** | Have a focused AI conversation about your note's content |
 | 📎 **Context injection** | Attach notes to any chat for full-fidelity context |
+| 📌 **Pin to sidebar** | Pin frequently used notes for quick access from the sidebar |
 | 🔍 **Agentic access** | Models can search, read, and update notes autonomously |
 | 📤 **Export** | Download as `.txt`, `.md`, or `.pdf` |
 
@@ -106,6 +107,24 @@ With [**native function calling**](/features/extensibility/plugin/tools#tool-cal
 
 ---
 
+## Pinning Notes
+
+Pin important notes to the sidebar for quick access. Pinned notes appear in a dedicated **Notes** folder in the sidebar, just like pinned chats.
+
+### How to pin
+
+* From the **Notes list**: click the **⋯** menu on any note and select **Pin to Sidebar**
+* From the **Note editor**: click the **⋯** menu in the top right and select **Pin to Sidebar**
+
+### How to unpin
+
+* From the **sidebar**: hover over the pinned note and click the **✕** button
+* From the **Notes list** or **editor**: click the **⋯** menu and select **Unpin**
+
+The sidebar Notes folder only appears when at least one note is pinned and the Notes feature is enabled.
+
+---
+
 ## Management and Sharing
 
 Access management options via the **More (...)** menu in the top right corner.
@@ -152,7 +171,7 @@ Draft something in Notes, use **Enhance** to expand bullet points into paragraph
 
 ### High-fidelity code context
 
-RAG uses vector search, which is probabilistic and might miss a crucial line. Paste specific functions into a Note and attach it to guarantee the model sees 100% of your code, exactly as arranged.
+RAG uses vector search, which is probabilistic and might miss a crucial line. Paste specific functions into a Note and attach it so the model sees 100% of your code, exactly as arranged.
 
 ### Data sanitization
 

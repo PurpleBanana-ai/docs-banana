@@ -147,6 +147,7 @@ This is the **#1 cause of unexplained memory growth** in production deployments.
 |---|---|---|
 | **Apache Tika** | General-purpose, widely used, handles most document types | `CONTENT_EXTRACTION_ENGINE=tika` + `TIKA_SERVER_URL=http://tika:9998` |
 | **Docling** | High-quality extraction with layout-aware parsing | `CONTENT_EXTRACTION_ENGINE=docling` |
+| **PaddleOCR-vl** | OCR-heavy workloads (scanned PDFs, images, mixed layouts); self-hosted vision-language OCR | `CONTENT_EXTRACTION_ENGINE=paddleocr_vl` + `PADDLEOCR_VL_BASE_URL=http://paddleocr-vl:8080` + `PADDLEOCR_VL_TOKEN=...` |
 | **External Loader** | Recommended for production and custom extraction pipelines | `CONTENT_EXTRACTION_ENGINE=external` + `EXTERNAL_DOCUMENT_LOADER_URL=...` |
 
 Using an external extractor moves the memory-intensive parsing out of the Open WebUI process entirely, eliminating this class of memory leaks.
@@ -292,9 +293,61 @@ If you're using **SQLite** (the default) in a cloud environment, you may be trad
 
 Cloud storage (Azure Disks, AWS EBS, GCP Persistent Disks) often has significantly higher latency and lower IOPS than local NVMe/SSD storage—especially on lower-tier storage classes. 
 
-:::warning Warning: Performance Risk with Network File Systems
-Using Network-attached File Systems like **NFS, SMB, or Azure Files** for your database storage (especially for SQLite) **may** introduce severe latency into the file locking and synchronous write operations that SQLite relies on.
+:::danger SQLite on NFS / SMB / Azure Files Is Not Supported — by SQLite Itself
+This restriction does **not** come from Open WebUI — it comes from **SQLite upstream**. The SQLite project [officially states](https://www.sqlite.org/faq.html#q5) that SQLite databases on network filesystems (NFS, SMB/CIFS, and similar) are **not supported**: file locking over those protocols is unreliable, and concurrent writers **can corrupt the database**. The SQLite documentation explicitly warns against it, and Open WebUI inherits that constraint because it uses SQLite.
+
+As a consequence, for Open WebUI the **only supported storage configurations are**:
+
+- **PostgreSQL** — recommended for any multi-user deployment and required for anything not on a directly-attached local SSD. This sidesteps the SQLite-on-network-storage problem entirely. **Or**
+- **SQLite on a directly-attached SSD / NVMe** — single-user / small deployments only. Must be a **local** disk on the host; SQLite upstream's guidance applies regardless of the application.
+
+**Not supported** for SQLite (per SQLite's own documentation, not an Open WebUI policy): **NFS, SMB/CIFS, Azure Files, GlusterFS, CephFS, object-storage-backed FUSE mounts, network PVCs, any remote or low-IOPS storage.** This includes Docker bind mounts and Kubernetes PersistentVolumeClaims backed by those filesystems. Beyond the performance symptoms below, you are risking **database corruption** — again, per SQLite, not us.
+
+If your storage is anything other than a local SSD/NVMe, **use PostgreSQL**.
+
+Typical symptoms after upgrading to releases that use the async SQLite driver:
+
+- `/api/config` takes **10–20+ seconds** on every request
+- `/api/v1/chats/?page=1` and other list endpoints stall for **minutes** under load
+- OIDC / SSO callbacks hang or "spin" when redirecting back to Open WebUI
+- Large (multi-second) gaps in DEBUG logs between `aiosqlite` and `httpcore` lines
+- `PRAGMA journal_mode=WAL` starts but never completes in logs
+
+Older synchronous SQLAlchemy releases (≤ 0.8.12) serialized contention in-process, which masked slow storage. The async driver opens connections across threads and hammers the filesystem, so network-attached storage degradation becomes immediately visible.
 :::
+
+#### Why the async backend makes network-storage SQLite fail suddenly
+
+If you upgraded from 0.8.x to 0.9.x and nothing else changed in your deployment, the mechanism below is why things broke. Worth understanding because `DATABASE_POOL_SIZE` and friends are symptom-adjacent, not cures.
+
+**The core thing is `fsync()`.** SQLite's durability guarantee is a synchronous flush on every commit. `fsync` latency depends entirely on where the file lives:
+
+| Storage | Typical `fsync` latency |
+| :--- | :--- |
+| Local NVMe | ~100 μs |
+| Local SATA SSD | 100 μs – a few ms |
+| Local HDD | ~10 ms |
+| NFS / CephFS / Azure Files (SSD-backed) | 50–500 ms |
+| NFS (HDD-backed or high-latency) | hundreds of ms to multiple seconds |
+
+The latency is identical in sync and async code. What changes is **how many concurrent `fsync`s are in flight at once**.
+
+**Old world — sync SQLAlchemy (0.8.x):** DB calls ran on FastAPI's ~40-thread worker pool. That pool was a natural throttle — you could never have more than ~40 concurrent SQLite operations. Slow storage made individual requests slow, but the thread pool created backpressure before anything collapsed. Users saw "the app is slow," not "the app is dead."
+
+**New world — async `aiosqlite` (0.9.x):** No thread-pool ceiling. The asyncio loop schedules thousands of DB coroutines in parallel, each trying to check out a connection from the **SQLAlchemy async pool** (default `pool_size=5` + `max_overflow=10` = 15 connections). On local SSD, a connection checks out, `fsync`s in ~1 ms, returns to the pool — churn is fast, 15 slots is plenty. On NFS/CephFS, the same connection blocks for hundreds of ms on `fsync`, stays checked out the whole time, and the pool saturates almost instantly. Every subsequent request waits `pool_timeout` (30 s) and then fails with:
+
+```
+sqlalchemy.exc.TimeoutError: QueuePool limit of size 5 overflow 10 reached,
+connection timed out, timeout 30.00
+```
+
+Increasing `DATABASE_POOL_SIZE` just moves the breaking point. More connections means more concurrent slow `fsync`s against the same slow storage — the filesystem is still the bottleneck, and you can't pool your way past it.
+
+**And WAL over NFS is specifically broken.** SQLite's WAL mode uses an `mmap`-backed `-shm` file for cross-process coordination. [SQLite upstream says plainly](https://www.sqlite.org/faq.html#q5) that `mmap` on NFS is unreliable — some NFS versions don't support it at all. Under low concurrency it was merely slow; under async concurrency you can hit actual locking pathologies (deadlocks, `PRAGMA journal_mode=WAL` that starts and never completes, multi-minute stalls on trivial queries).
+
+**Why Postgres is the fix, not a bigger pool:** the Postgres server manages its own I/O concurrency against its own local storage. Your app hits it over a network socket, but that hop is orders of magnitude cheaper than NFS `fsync`, and Postgres was designed from day one for concurrent writers — no file-level locking, no cross-process `mmap` coordination, no WAL-on-network-FS caveats. A dedicated async driver (`asyncpg`) talks to it directly. That's the only database shape that actually composes with async concurrency when the storage isn't guaranteed-fast-local.
+
+The one-line summary: sync backends throttled concurrency through thread pools, so slow storage just made things *slow*. Async backends allow massive concurrency, which means slow `fsync`s stack up, connections stay checked out longer, the pool saturates, and the whole thing wedges. The same storage was tolerable before because the app wasn't asking it to do 20 concurrent `fsync`s.
 
 SQLite is particularly sensitive to disk performance because it performs synchronous writes. Moving from local SSDs to a network share can increase latency by 10x or more per operation.
 
@@ -302,10 +355,21 @@ SQLite is particularly sensitive to disk performance because it performs synchro
 - Performance is acceptable with a single user but degrades rapidly as concurrency increases.
 - High "I/O Wait" on the server despite low CPU usage.
 
-**Solutions:**
-1. **Use high-performance Block Storage:**
-   - Ensure you are using SSD-backed **Block Storage** classes (e.g., `Premium_LRS` on Azure Disks, `gp3` on AWS EBS, `pd-ssd` on GCP). Avoid "File" based storage classes (like `azurefile-csi`) for database workloads.
-2. **Use PostgreSQL instead:** For any medium to large production deployment, **Postgres is mandatory**. SQLite is generally not recommended at scale in cloud environments due to the inherent latency of network-attached storage and the compounding effect of file locking over the network.
+**Solutions (in order of robustness):**
+
+1. **Best — migrate to PostgreSQL.** This is the recommended fix for any deployment that is not strictly single-user on a local disk, and it is required for any deployment on remote / network / low-IOPS storage. Set:
+   ```bash
+   DATABASE_URL=postgresql+asyncpg://user:password@host:5432/webui
+   ```
+   PostgreSQL removes the fsync-per-connection pathology entirely because the database process owns its own storage, and it is the only supported option for multi-user workloads.
+2. **Acceptable — move `webui.db` onto directly-attached local SSD/NVMe.** Only appropriate for single-user or very small deployments. Bind-mount a directory on the host's **local** SSD/NVMe into `/app/backend/data`. Do **not** use NFS, SMB, Azure Files, or any network-backed storage class — not even "high-performance" network block storage. SQLite was not designed for network filesystems and will always be slow on them.
+3. **Temporary workaround only — keep SQLite on NFS with reduced concurrency.** If you cannot immediately move storage or switch databases, set:
+   ```bash
+   DATABASE_POOL_SIZE=1
+   DATABASE_SQLITE_PRAGMA_BUSY_TIMEOUT=30000
+   ```
+   `DATABASE_POOL_SIZE=1` forces a single serialized async connection, trading concurrency for stability. `DATABASE_SQLITE_PRAGMA_BUSY_TIMEOUT=30000` gives SQLite 30 seconds to acquire locks, which NFS can take much longer to grant than local disk. This is **not a supported long-term configuration** — expect degraded throughput, intermittent stalls, and potential corruption. Plan to migrate to PostgreSQL or local SSD as soon as possible. A warm pool may briefly appear fine after restart, but the problem returns under load.
+4. **Cloud block storage:** When using cloud block storage for the Open WebUI data volume (for PostgreSQL or the application itself), use SSD-backed **Block Storage** classes (e.g., `Premium_LRS` on Azure Disks, `gp3` on AWS EBS, `pd-ssd` on GCP). Avoid "File" based storage classes (like `azurefile-csi`) for any database workload — including SQLite.
 
 ### Other Cloud-Specific Considerations
 
@@ -343,6 +407,8 @@ Local Whisper models are heavy (~500MB+ RAM).
 -   **Configuration**:
     *   **Admin Panel**: `Settings > Audio > STT Engine`
     *   **Env Var**: `AUDIO_STT_ENGINE=webapi`
+
+-   **Bypass Audio Preprocessing (offload to the STT provider)**: If you use an external STT engine (OpenAI, Deepgram, Azure, Mistral) that already accepts raw audio and handles format conversion on its side, set `BYPASS_PYDUB_PREPROCESSING=true`. This skips Open WebUI's pydub-based MP3 conversion, compression, and chunk splitting — eliminating a CPU-heavy step on every upload, removing the ffmpeg dependency, and reducing latency on large files. Only disable preprocessing when you are confident the upstream provider handles unprocessed audio correctly.
 
 ### 2. Disable Unused Features
 
@@ -394,7 +460,7 @@ If resource usage is critical, disable automated features that constantly trigge
 1.  **Database**: **PostgreSQL** (Mandatory).
 2.  **Content Extraction**: **Tika** or **Docling** (Mandatory — default pypdf leaks memory). See [Content Extraction Engine](#content-extraction-engine).
 3.  **Embeddings**: **External** — `RAG_EMBEDDING_ENGINE=openai` or `ollama` (Mandatory — default SentenceTransformers consumes too much RAM at scale). See [Embedding Engine](#embedding-engine).
-4.  **Tool Calling**: **Native Mode** (strongly recommended — Default Mode is legacy and breaks KV cache). See [Tool Calling Modes](/features/extensibility/plugin/tools#tool-calling-modes-default-vs-native).
+4.  **Tool Calling**: **Native Mode** (mandatory — Default Mode is legacy, no longer supported, and breaks KV cache). All models should be configured for Native Mode. See [Tool Calling Modes](/features/extensibility/plugin/tools#tool-calling-modes-default-vs-native).
 5.  **Workers**: `THREAD_POOL_SIZE=2000` (Prevent timeouts).
 6.  **Streaming**: `CHAT_RESPONSE_STREAM_DELTA_CHUNK_SIZE=7` (Reduce CPU/Net/DB writes).
 7.  **Chat Saving**: `ENABLE_REALTIME_CHAT_SAVE=False`.
@@ -427,7 +493,7 @@ These are real-world mistakes that cause organizations to massively over-provisi
 | **Running SentenceTransformers at scale** | Each worker loads ~500MB embedding model → RAM usage explodes → you add more machines | Use external embeddings (`RAG_EMBEDDING_ENGINE=openai` or `ollama`) |
 | **Redis Cluster when single Redis suffices** | Too many replicas → too many connections → Redis can't handle them → you deploy Redis Cluster to compensate | Fix the root cause (fewer replicas, `timeout 1800`, `maxclients 10000`) |
 | **Scaling replicas to mask memory leaks** | Leaky processes → OOM kills → auto-scaler adds more pods → more Redis connections → Redis overwhelmed | Fix the leaks first (content extraction, embedding engine), then right-size |
-| **Using Default (prompt-based) tool calling** | Injected prompts may break KV cache → higher latency → more resources needed per request | Switch to Native Mode for all capable models |
+| **Using Default (prompt-based) tool calling** | Legacy / no longer supported; injected prompts break KV cache → higher latency → more resources needed per request; cannot access built-in system tools | Switch every model to Native Mode |
 | **Not configuring Redis stale connection timeout** | Connections accumulate forever → Redis OOM → you deploy Redis Cluster | Add `timeout 1800` to redis.conf |
 | **Using base64-encoded icons in Actions/Filters** | Icon data is embedded in `/api/models` responses sent to the frontend on every page load for every model. A 500 KB base64 icon on 3 actions across 20 models = **30 MB of payload bloat** per request → slow frontend loads, high bandwidth usage, unnecessary backend memory pressure | Host icons as static files and reference them by URL in `icon_url` / `self.icon`. See [Action Function icon_url warning](/features/extensibility/plugin/functions/action#example---specifying-action-frontmatter) |
 
@@ -451,6 +517,7 @@ For detailed information on all available variables, see the [Environment Config
 | `RAG_EMBEDDING_ENGINE` | [Embedding Engine](/reference/env-configuration#rag_embedding_engine) |
 | `CONTENT_EXTRACTION_ENGINE` | [Content Extraction Engine](/reference/env-configuration#content_extraction_engine) |
 | `AUDIO_STT_ENGINE` | [STT Engine](/reference/env-configuration#audio_stt_engine) |
+| `BYPASS_PYDUB_PREPROCESSING` | [Bypass pydub audio preprocessing](/reference/env-configuration#bypass_pydub_preprocessing) |
 | `ENABLE_IMAGE_GENERATION` | [Image Generation](/reference/env-configuration#enable_image_generation) |
 | `ENABLE_AUTOCOMPLETE_GENERATION` | [Autocomplete](/reference/env-configuration#enable_autocomplete_generation) |
 | `RAG_SYSTEM_CONTEXT` | [RAG System Context](/reference/env-configuration#rag_system_context) |
