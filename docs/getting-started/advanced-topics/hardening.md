@@ -9,7 +9,7 @@ Open WebUI is a self-hosted application that gives authenticated users access to
 
 This guide covers the configuration options available for hardening your deployment. Each section explains what a setting does, what the default is, and how to change it. It is not an exhaustive security guide, and securing your deployment is ultimately your responsibility. Your environment, compliance requirements, and threat model will determine which of these are relevant to you.
 
-:::tip Network Placement
+## Network Placement
 
 Open WebUI is built for private, trusted networks, similar to other self-hosted infrastructure like databases, container registries, and CI servers. Most deployments run behind a corporate firewall, VPN, or other network boundary where access is limited to known users.
 
@@ -20,8 +20,6 @@ For organizations where security is a priority, the recommended deployment place
 - A reverse proxy with authentication and IP allowlisting
 
 DDoS protection and brute-force prevention (rate limiting, connection throttling, fail2ban) should be handled at the proxy or network layer.
-
-:::
 
 If you are deploying Open WebUI for the first time, start with the [Quick Reference](#quick-reference) at the bottom of this page for a prioritized summary, then read the sections relevant to your setup.
 
@@ -547,6 +545,40 @@ WEB_FETCH_FILTER_LIST=!internal.yourcompany.com,!10.0.0.0/8
 
 Prefix entries with `!` to block them.
 
+Outbound HTTP requests also do not follow `3xx` redirects by default. Without this gate, an attacker-supplied URL can pass the allowlist check on the originally-submitted host and then `302`-redirect to an internal address (RFC 1918, `127.0.0.1`, the cloud-metadata IP) that is reached without re-validation. The default closes that bypass across the RAG web loader, image loading, OAuth pre-flight, code-interpreter login, and tool-server execution. Keep the default unless you have a specific need (e.g. shortlink URLs) and other SSRF protections are in place:
+
+```bash
+AIOHTTP_CLIENT_ALLOW_REDIRECTS=false
+```
+
+### Profile image URL forwarding
+
+The user and model profile-image endpoints can issue a `302 Found` redirect to whatever origin is stored in `profile_image_url` so that externally-hosted avatars (e.g. Gravatar via an upstream identity provider) display in the UI. That redirect causes the user's browser to make a request directly to the external origin, leaking client IP, User-Agent, and Referer headers — and an account whose `profile_image_url` was set to an attacker-controlled host can use that to deanonymize anyone who renders their avatar.
+
+To suppress the redirect entirely and serve the bundled default image instead:
+
+```bash
+ENABLE_PROFILE_IMAGE_URL_FORWARDING=false
+```
+
+Default is `true` so existing deployments relying on external avatars keep working. Data URIs and same-origin/static images are unaffected by this flag — they continue to render normally.
+
+Profile images stored as base64 `data:` URIs are also constrained to a MIME-type allowlist. The default is `image/png,image/jpeg,image/gif,image/webp`; SVG is intentionally excluded because it can carry inline `<script>`. Responses also set `X-Content-Type-Options: nosniff` so the browser cannot sniff a non-image payload into an executable type. To narrow further (e.g. PNG/JPEG only), set:
+
+```bash
+PROFILE_IMAGE_ALLOWED_MIME_TYPES=image/png,image/jpeg
+```
+
+### Iframe content-security-policy
+
+Open WebUI renders LLM-generated and user-uploaded HTML inside `srcdoc` iframes for Artifacts, code/HTML previews, file previews, and citation modals. The `sandbox` attribute on those iframes provides the baseline isolation. For deployments that want a stronger limit on what the rendered HTML can do — particularly outbound network requests — set a CSP that is injected into every iframe document:
+
+```bash
+IFRAME_CSP=default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; connect-src 'none'
+```
+
+The example above lets inline scripts run inside the sandbox (needed for most artifacts) but blocks all `fetch`/`XMLHttpRequest`/`WebSocket` traffic — useful when you do not want a model to be able to exfiltrate session data through a generated artifact. Tighten or relax as appropriate; an overly strict policy will break legitimate artifacts.
+
 ### File upload limits
 
 By default, there are no size or count limits on uploaded files. To prevent storage exhaustion:
@@ -568,7 +600,7 @@ RAG_ALLOWED_FILE_EXTENSIONS=.pdf,.txt,.md,.docx,.csv
 
 Tools and Functions run arbitrary Python code on your server with the same access as the Open WebUI process. This is fundamental to how they work, and it means they can read files, make network requests, access environment variables, and interact with the database.
 
-For details on the security model, see the [Security Policy](/security#tools-functions-and-pipelines-security).
+For details on the security model, see the [Security Policy](/security/security-policy#tools-functions-and-pipelines-security).
 
 Because Tools and Functions execute server-side code, any user with permission to create or import them effectively has the same level of access as the Open WebUI process itself. This is inherent to how extensibility works. By default, only administrators can create and import Tools and Functions. The settings below control these permissions.
 
@@ -712,7 +744,7 @@ The table below summarizes the key hardening actions covered in this guide. Each
 
 | Action | Default | Recommended for production |
 |---|---|---|
-| [Keep on private network](#hardening-open-webui) | No restriction | VPN, firewall, or zero-trust proxy |
+| [Keep on private network](#network-placement) | No restriction | VPN, firewall, or zero-trust proxy |
 | [Serve over HTTPS](#https-and-tls) | HTTP | HTTPS via reverse proxy |
 | [Set `WEBUI_SECRET_KEY`](#secret-key) (multi-replica) | Auto-generated | Explicit shared key |
 | [Review signup policy](#registration) | Disabled after first user | Keep disabled or use `pending` role |

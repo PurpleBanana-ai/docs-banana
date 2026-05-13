@@ -87,6 +87,10 @@ Hold **Shift** in the User Menu to reveal pin/unpin buttons. Pinning Calendar ad
 - **Personal**: your default calendar for manual events (blue, auto-created on first visit)
 - **Scheduled Tasks**: virtual read-only overlay of automation schedules and runs (purple, only visible when the user has [Automations](/features/chat-conversations/chat-features/automations) access)
 
+### Create a Calendar
+
+Click the small **+** button next to the **Calendars** heading in the calendar sidebar to open the **New Calendar** modal. Enter a name and pick a color from the preset palette (blue, red, green, amber, violet, pink, cyan, orange) and click **Create**. The new calendar appears in the sidebar immediately and shows up in the calendar picker when creating or editing events. Each calendar belongs to its creator and can be shared via [Sharing Calendars](#sharing-calendars).
+
 ### Create an Event
 
 1. Click **New Event** (sidebar or top bar) or click any day/hour cell on the calendar grid
@@ -191,6 +195,10 @@ Calendars support the same access grant system used by knowledge bases, models, 
 
 Only the calendar **owner** (or an admin) can manage access grants and delete the calendar itself.
 
+:::info Public sharing is permission-gated
+Wildcard access grants (calendar readable or writable by every user with the Calendar feature) are gated by the **Calendars Public Sharing** permission. When disabled for a non-admin owner, public principals are silently stripped from the access grant list on calendar create/update — per-user and per-group grants remain unaffected. Admins always retain the ability to share publicly. Configurable per-group in **Admin Panel → Users → Groups → Permissions** or via [`USER_PERMISSIONS_CALENDAR_ALLOW_PUBLIC_SHARING`](/reference/env-configuration#user_permissions_calendar_allow_public_sharing).
+:::
+
 ---
 
 ## Attendees and RSVP
@@ -239,6 +247,7 @@ The global alert polling window is configurable via [`CALENDAR_ALERT_LOOKAHEAD_M
 |----------|---------|-------------|
 | [`ENABLE_CALENDAR`](/reference/env-configuration#enable_calendar) | `True` | Enable or disable the Calendar feature globally |
 | [`USER_PERMISSIONS_FEATURES_CALENDAR`](/reference/env-configuration#user_permissions_features_calendar) | `True` | Enable or disable Calendar access for non-admin users by default |
+| [`USER_PERMISSIONS_CALENDAR_ALLOW_PUBLIC_SHARING`](/reference/env-configuration#user_permissions_calendar_allow_public_sharing) | `False` | Allow non-admin owners to attach wildcard read/write access grants to a calendar |
 | [`SCHEDULER_POLL_INTERVAL`](/reference/env-configuration#scheduler_poll_interval) | `10` | Seconds between scheduler ticks (shared with automations) |
 | [`CALENDAR_ALERT_LOOKAHEAD_MINUTES`](/reference/env-configuration#calendar_alert_lookahead_minutes) | `10` | Default alert window in minutes for upcoming events |
 
