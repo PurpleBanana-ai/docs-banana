@@ -15,7 +15,7 @@ import Head from '@docusaurus/Head';
 
 # Open WebUI & llama.cpp
 
-*Last updated: May 2026*
+*Last updated: August 2026*
 
 [llama.cpp](https://github.com/ggml-org/llama.cpp) by Georgi Gerganov is one of the most important projects in the AI ecosystem, and we mean that. Without llama.cpp, the local AI movement as we know it wouldn't exist. It proved that you could run serious models on consumer hardware, introduced the GGUF format that became the industry standard, and inspired an entire generation of tools. And with `llama-server`, it's not just an engine anymore: it has its own built-in web interface and OpenAI-compatible API ready to go.
 
@@ -36,15 +36,16 @@ import Head from '@docusaurus/Head';
 - **OpenAI-compatible API** via `llama-server` so any tool can connect to it
 - **Multi-model router mode** for serving multiple models from one endpoint
 - **One of the most actively developed projects in AI** with a pace of commits that's hard to match
-- **MIT licensed** and genuinely community-driven
+- **MIT licensed** and actively maintained
 
 ---
 
 ## What Open WebUI Does Well
 
+- **Full agentic platform** on top of the models llama.cpp serves, with [builtin tools](/features/extensibility/plugin/tools#built-in-system-tools-nativeagentic-mode) the model calls itself, [MCP](/features/extensibility/mcp) servers, [sub-agents](/features/chat-conversations/chat-features/subagents), [timers](/features/chat-conversations/chat-features/timers) and [automations](/features/chat-conversations/chat-features/automations)
+- **Customise practically everything**, from per-model prompts, tools, knowledge and parameters to [filters, pipes, actions and event functions](/features/extensibility/plugin/functions) that change behaviour anywhere in the pipeline, plus theming, banners and per-group permissions
 - **Rich web platform** with full chat, conversations, history, organization, and search
-- **Knowledge & RAG** with 9 vector databases, 5 extraction engines, and hybrid search with reranking
-- **Python extensibility** including custom tools, MCP servers, pipelines, and community extensions
+- **Knowledge & RAG** with 13 vector databases, 8 extraction engines, and hybrid search with reranking
 - **Multi-provider support** to use llama.cpp models alongside OpenAI, Anthropic, Google, and others
 - **Team platform** with Channels, Notes, Automations, RBAC, SSO/OIDC/LDAP, and SCIM 2.0
 - **Open Terminal** providing a full computing environment for code execution

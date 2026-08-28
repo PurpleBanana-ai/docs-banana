@@ -1,9 +1,21 @@
 ---
 sidebar_position: 100
-title: "🚀 Getting Started"
+title: "Getting Started"
 ---
 
+import ThemedImage from '@theme/ThemedImage';
+import useBaseUrl from '@docusaurus/useBaseUrl';
+
 # Getting Started with Open WebUI
+
+<ThemedImage
+  alt="Getting Started with Open WebUI: install, connect a provider, start chatting, then expand into app install, agents, sharing, and updates"
+  sources={{
+    light: useBaseUrl('/images/banners/getting-started-light.svg'),
+    dark: useBaseUrl('/images/banners/getting-started-dark.svg'),
+  }}
+  style={{ width: '100%', margin: '0.25rem 0 1.75rem' }}
+/>
 
 **From zero to your first AI conversation in under five minutes.**
 
@@ -30,15 +42,31 @@ Everything you need for a working setup. Choose Docker for the fastest path, Pyt
 
 ---
 
+## 📱 Open WebUI as an App
+
+**Already running Open WebUI? Install it as an app on any device.**
+
+Open WebUI is a Progressive Web App (PWA). Add it to your phone's home screen, your desktop taskbar, or your dock. No separate download required. Get a full-screen, native-feeling experience from any browser.
+
+| | |
+| :--- | :--- |
+| 📱 **iPhone / iPad** | Share → Add to Home Screen |
+| 🤖 **Android** | Menu → Install app |
+| 🖥️ **Chrome / Edge** | Address bar install icon |
+
+[**Install as an app →**](/getting-started/open-webui-as-app)
+
+---
+
 ## Essentials for Open WebUI
 
-**Installed and chatting — now what?**
+**Installed and chatting. Now what?**
 
 Five short sections that cover the things every new user eventually wishes they'd known on day one: what plugins are and how to install them, why long chats eventually error out (and how to fix it with a filter), the "invisible" Task Model that powers titles/autocomplete, getting started with RAG over your own documents, and turning on Native tool calling.
 
 | | |
 | :--- | :--- |
-| 🧩 **Plugins** | Tools, Pipes, Filters, Actions — the extensibility story |
+| 🧩 **Plugins** | Tools, Pipes, Filters, Actions: the extensibility story |
 | 🧠 **Context management** | Why long chats hit a wall and how to handle it |
 | 🤖 **Task models** | Keep titles, tags, and autocomplete off your main model |
 | 📚 **Basic RAG** | Chatting with your own documents |

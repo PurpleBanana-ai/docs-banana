@@ -21,6 +21,14 @@ For organizations where security is a priority, the recommended deployment place
 
 DDoS protection and brute-force prevention (rate limiting, connection throttling, fail2ban) should be handled at the proxy or network layer.
 
+### Requests for paths that do not exist
+
+Open WebUI serves a single-page application, so a request for a path the application does not know returns the application shell with a status of 200 rather than a 404. Requests for JavaScript files are the exception and do return 404, because a missing script has to fail rather than be handed a page of HTML.
+
+The visible consequence is in the access log. Automated scanners probe every host they find for the same handful of paths, `/wp-admin/`, `/phpmyadmin`, `.env` and similar, and each of those probes is answered with a 200. Nothing has been found and nothing has been exposed, since the response is the same shell every visitor receives, but the log gives the impression that the requests succeeded.
+
+Filtering that traffic belongs at the reverse proxy, together with the rate limiting and brute-force protection above. A proxy can answer or drop those paths before they reach the application, which keeps them out of the log entirely and costs the application nothing. Blocking them inside Open WebUI would mean maintaining a list of paths that scanners currently use, and that list would need updating forever.
+
 If you are deploying Open WebUI for the first time, start with the [Quick Reference](#quick-reference) at the bottom of this page for a prioritized summary, then read the sections relevant to your setup.
 
 ---
@@ -28,10 +36,6 @@ If you are deploying Open WebUI for the first time, start with the [Quick Refere
 ## Secret Key
 
 The `WEBUI_SECRET_KEY` is used to sign JWTs (login tokens) and derive encryption keys for OAuth session data.
-
-**How the default works:**
-
-When running via Docker (`start.sh`) or `open-webui serve`, the application checks whether `WEBUI_SECRET_KEY` is set as an environment variable. If it is not, a random key is generated automatically and saved to `.webui_secret_key` inside the data directory. On subsequent restarts, the saved key is reloaded. This means that for single-instance deployments, no manual configuration is needed.
 
 **When you need to set it explicitly:**
 
@@ -138,7 +142,7 @@ Without Redis, **signing out does not invalidate a user's token**. The token rem
 
 - A stolen or leaked token cannot be revoked by signing out
 - Changing a user's password does not invalidate their existing sessions
-- Admin-initiated account deactivation does not immediately block access
+- Deactivating an account does not revoke the token already issued to it, although the account's role is rechecked on every request
 - OIDC back-channel logout cannot revoke tokens
 
 With Redis configured, Open WebUI supports per-token revocation. When a user signs out, changes their password, or is deactivated by an admin, their token is added to a revocation list that auto-expires. This is the intended production behavior.
@@ -165,6 +169,12 @@ Multiple origins are separated with semicolons:
 
 ```bash
 CORS_ALLOW_ORIGIN=https://chat.yourcompany.com;https://internal.yourcompany.com
+```
+
+If you want to disable CORS entirely, set it to an [invalid domain](https://en.wikipedia.org/wiki/.invalid):
+
+```bash
+CORS_ALLOW_ORIGIN=http://cors.invalid
 ```
 
 If you use a desktop app with a custom URL scheme, add it via:
@@ -278,7 +288,7 @@ OAUTH_ALLOWED_ROLES=user,admin,superadmin
 OAUTH_MERGE_ACCOUNTS_BY_EMAIL=false
 ```
 
-When enabled, an OAuth login with an email matching an existing local account will merge the two. **This is not recommended.** It depends on your OAuth provider reliably verifying email addresses. If your provider does not guarantee email verification, a user who controls a matching email could gain access to the existing account — effectively an account takeover. Keep this set to `false` unless you have verified that your provider enforces email verification.
+When enabled, an OAuth login with an email matching an existing local account will merge the two. **This is not recommended.** It depends on your OAuth provider reliably verifying email addresses. If your provider does not guarantee email verification, a user who controls a matching email could gain access to the existing account, effectively an account takeover. Keep this set to `false` unless you have verified that your provider enforces email verification.
 
 ### Session limits
 
@@ -294,7 +304,7 @@ ENABLE_OAUTH_BACKCHANNEL_LOGOUT=true
 
 ## Trusted Header Authentication
 
-If your reverse proxy handles authentication (Authelia, Authentik, oauth2-proxy), you can pass the authenticated identity to Open WebUI via HTTP headers. **This is possible but risky depending on your setup** — incorrect configuration allows any client to authenticate as any user by forging the header:
+If your reverse proxy handles authentication (Authelia, Authentik, oauth2-proxy), you can pass the authenticated identity to Open WebUI via HTTP headers. **This is possible but risky depending on your setup.** Incorrect configuration allows any client to authenticate as any user by forging the header:
 
 ```bash
 WEBUI_AUTH_TRUSTED_EMAIL_HEADER=X-Forwarded-Email
@@ -334,7 +344,7 @@ For production deployments, PostgreSQL provides better concurrency and reliabili
 DATABASE_URL=postgresql://user:password@db-host:5432/openwebui
 ```
 
-See the [Scaling Guide](/getting-started/advanced-topics/scaling#step-1--switch-to-postgresql) for migration details. Use strong, unique credentials and keep the database on an internal network.
+See the [Scaling Guide](/getting-started/advanced-topics/scaling#step-1-switch-to-postgresql) for migration details. Use strong, unique credentials and keep the database on an internal network.
 
 ### SQLCipher
 
@@ -423,7 +433,7 @@ BYPASS_MODEL_ACCESS_CONTROL=false
 ENABLE_OPENAI_API_PASSTHROUGH=false
 ```
 
-The OpenAI router includes a catch-all proxy endpoint (`/{path:path}`) that forwards any request to the upstream OpenAI-compatible API using the admin-configured API key. **This is disabled by default and should be kept disabled.** When enabled, any authenticated user can reach any upstream endpoint — including endpoints not natively handled by Open WebUI — using the admin's credentials and without model-level access control. Only enable this if you explicitly need direct passthrough to upstream API endpoints and understand the security implications.
+The OpenAI router includes a catch-all proxy endpoint (`/{path:path}`) that forwards any request to the upstream OpenAI-compatible API using the admin-configured API key. **This is disabled by default and should be kept disabled.** When enabled, any authenticated user can reach any upstream endpoint (including endpoints not natively handled by Open WebUI) using the admin's credentials and without model-level access control. Only enable this if you explicitly need direct passthrough to upstream API endpoints and understand the security implications.
 
 ### Data sharing and export
 
@@ -537,6 +547,8 @@ ENABLE_RAG_LOCAL_WEB_FETCH=false
 
 Setting this to `true` allows the web loader to fetch content from private IP ranges, which may be necessary in some environments but introduces SSRF risk.
 
+The private-address check looks inside IPv6 as well as at it. An address such as `::ffff:169.254.169.254`, or a 6to4, Teredo or NAT64 address wrapping an RFC 1918 or loopback target, is globally routable as IPv6 while still resolving to somewhere internal; Open WebUI extracts the embedded IPv4 address and blocks the fetch on that basis. This applies both when a URL is validated and again at connection time, so a DNS answer that returns one of these forms is rejected too.
+
 Open WebUI also blocks cloud provider metadata endpoints by default (AWS `169.254.169.254`, GCP `metadata.google.internal`, Azure `metadata.azure.com`, and Alibaba Cloud `100.100.100.200`). You can extend this blocklist with additional domains or IPs:
 
 ```bash
@@ -551,9 +563,13 @@ Outbound HTTP requests also do not follow `3xx` redirects by default. Without th
 AIOHTTP_CLIENT_ALLOW_REDIRECTS=false
 ```
 
+:::note Playwright loader (v0.9.6+)
+Earlier versions applied URL validation and the redirect gate only to the default web loader; the Playwright-based loader (`WEB_LOADER_ENGINE=playwright` / the `playwright` Docker variant) could navigate and follow redirects to internal or blocklisted URLs unchecked. As of v0.9.6 the Playwright path enforces the same `validate_url()` and redirect rules as the default loader, so the SSRF controls above apply regardless of which web loader engine you run. If you use Playwright, ensure you are on v0.9.6 or later.
+:::
+
 ### Profile image URL forwarding
 
-The user and model profile-image endpoints can issue a `302 Found` redirect to whatever origin is stored in `profile_image_url` so that externally-hosted avatars (e.g. Gravatar via an upstream identity provider) display in the UI. That redirect causes the user's browser to make a request directly to the external origin, leaking client IP, User-Agent, and Referer headers — and an account whose `profile_image_url` was set to an attacker-controlled host can use that to deanonymize anyone who renders their avatar.
+The user and model profile-image endpoints can issue a `302 Found` redirect to whatever origin is stored in `profile_image_url` so that externally-hosted avatars (e.g. Gravatar via an upstream identity provider) display in the UI. That redirect causes the user's browser to make a request directly to the external origin, leaking client IP, User-Agent, and Referer headers. An account whose `profile_image_url` was set to an attacker-controlled host can use that to deanonymize anyone who renders their avatar.
 
 To suppress the redirect entirely and serve the bundled default image instead:
 
@@ -561,7 +577,7 @@ To suppress the redirect entirely and serve the bundled default image instead:
 ENABLE_PROFILE_IMAGE_URL_FORWARDING=false
 ```
 
-Default is `true` so existing deployments relying on external avatars keep working. Data URIs and same-origin/static images are unaffected by this flag — they continue to render normally.
+Default is `true` so existing deployments relying on external avatars keep working. Data URIs and same-origin/static images are unaffected by this flag: they continue to render normally.
 
 Profile images stored as base64 `data:` URIs are also constrained to a MIME-type allowlist. The default is `image/png,image/jpeg,image/gif,image/webp`; SVG is intentionally excluded because it can carry inline `<script>`. Responses also set `X-Content-Type-Options: nosniff` so the browser cannot sniff a non-image payload into an executable type. To narrow further (e.g. PNG/JPEG only), set:
 
@@ -571,13 +587,13 @@ PROFILE_IMAGE_ALLOWED_MIME_TYPES=image/png,image/jpeg
 
 ### Iframe content-security-policy
 
-Open WebUI renders LLM-generated and user-uploaded HTML inside `srcdoc` iframes for Artifacts, code/HTML previews, file previews, and citation modals. The `sandbox` attribute on those iframes provides the baseline isolation. For deployments that want a stronger limit on what the rendered HTML can do — particularly outbound network requests — set a CSP that is injected into every iframe document:
+Open WebUI renders LLM-generated and user-uploaded HTML inside `srcdoc` iframes for Artifacts, code/HTML previews, file previews, and citation modals. The `sandbox` attribute on those iframes provides the baseline isolation. For deployments that want a stronger limit on what the rendered HTML can do, particularly outbound network requests, set a CSP that is injected into every iframe document:
 
 ```bash
 IFRAME_CSP=default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; connect-src 'none'
 ```
 
-The example above lets inline scripts run inside the sandbox (needed for most artifacts) but blocks all `fetch`/`XMLHttpRequest`/`WebSocket` traffic — useful when you do not want a model to be able to exfiltrate session data through a generated artifact. Tighten or relax as appropriate; an overly strict policy will break legitimate artifacts.
+The example above lets inline scripts run inside the sandbox (needed for most artifacts) but blocks all `fetch`/`XMLHttpRequest`/`WebSocket` traffic, useful when you do not want a model to be able to exfiltrate session data through a generated artifact. Tighten or relax as appropriate; an overly strict policy will break legitimate artifacts.
 
 ### File upload limits
 
@@ -604,21 +620,32 @@ For details on the security model, see the [Security Policy](/security/security-
 
 Because Tools and Functions execute server-side code, any user with permission to create or import them effectively has the same level of access as the Open WebUI process itself. This is inherent to how extensibility works. By default, only administrators can create and import Tools and Functions. The settings below control these permissions.
 
+### Disabling the feature entirely
+
+If your deployment does not use Tools or Functions at all, remove the surface completely:
+
+```bash
+# Set to false to disable the built-in Tools and Functions execution surface
+ENABLE_PLUGINS=false
+```
+
+This is stronger than [Safe Mode](#safe-mode). Safe Mode deactivates all Functions but leaves the feature in place; `ENABLE_PLUGINS=false` hides the workspace **Tools** and admin **Functions** pages, makes their listing endpoints return empty, and stops those plugins loading and running, so filters, actions and pipe functions are skipped and user-authored tools are never offered to a model.
+
 ### Code execution
 
 Open WebUI has two code execution features enabled by default:
 
 ```bash
-# Allows code blocks in chat responses to be executed (default: true, engine: pyodide)
+# Allows code blocks in chat responses to be executed (default: true; engine pyodide, legacy)
 ENABLE_CODE_EXECUTION=true
 CODE_EXECUTION_ENGINE=pyodide
 
-# Allows the model to run code as part of its reasoning (default: true, engine: pyodide)
+# Allows the model to run code as part of its reasoning (default: true; engine pyodide, legacy)
 ENABLE_CODE_INTERPRETER=true
 CODE_INTERPRETER_ENGINE=pyodide
 ```
 
-The default engine is `pyodide`, which runs Python in the browser via WebAssembly and does not execute code on the server. If you switch to Jupyter (`jupyter`), code runs on the Jupyter server, which has server-side access. Secure the Jupyter instance accordingly if using this engine.
+`pyodide` (browser/WebAssembly) and `jupyter` (server) are **legacy** code-execution engines. **If you do not need in-chat code execution, disable both features** by setting `ENABLE_CODE_EXECUTION=false` and `ENABLE_CODE_INTERPRETER=false`. If you do need it, isolate it: prefer **[Open Terminal](/features/open-terminal)**, which runs code in a separate Docker container, with **[Terminals](/enterprise)** for per-user isolation in multi-tenant deployments. Do not treat the browser-based `pyodide` engine as a security boundary, and never expose the `jupyter` engine without securing the Jupyter instance, which has direct server-side access.
 
 ### Safe Mode
 
@@ -757,6 +784,7 @@ The table below summarizes the key hardening actions covered in this guide. Each
 | [Enable audit logging](#audit-logging) | `NONE` | `METADATA` or higher |
 | [Restrict API key endpoints](#endpoint-restrictions) | All endpoints | `ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS=true` |
 | [Keep API passthrough disabled](#openai-api-passthrough) | Disabled | Keep `ENABLE_OPENAI_API_PASSTHROUGH=false` |
+| [Disable Tools and Functions if unused](#disabling-the-feature-entirely) | Enabled | `ENABLE_PLUGINS=false` |
 | [Disable auto pip install](#dependency-installation) | Enabled | `ENABLE_PIP_INSTALL_FRONTMATTER_REQUIREMENTS=false` |
 | [Review community sharing](#data-sharing-and-export) | `true` | Disable if sensitive data |
 | [Review direct connections](#data-sharing-and-export) | `false` | Keep disabled unless needed |
@@ -792,7 +820,7 @@ For organizations where security is a priority, the following practices define t
 
 7. **Keep Tool and Function creation restricted to administrators and review all code before importing.** By default, only administrators can create, import, and manage Tools and Functions. Do not grant workspace permissions to untrusted users. Treat third-party Tools with the same scrutiny as any code running on your infrastructure. Never import Tools without reviewing their source code first. [Details](#tools-functions-and-pipelines)
 
-8. **Disable automatic dependency installation and disable code execution if not needed.** Set `ENABLE_PIP_INSTALL_FRONTMATTER_REQUIREMENTS=false` to prevent Tools from pulling in arbitrary packages at runtime. If your deployment does not require in-chat code execution, disable it entirely. If it is needed, keep the default `pyodide` engine, which runs in the browser, not on the server. Do not switch to the Jupyter engine without securing the Jupyter instance. Keep direct connections and direct tool servers disabled. [Details](#dependency-installation)
+8. **Disable automatic dependency installation and disable code execution if not needed.** Set `ENABLE_PIP_INSTALL_FRONTMATTER_REQUIREMENTS=false` to prevent Tools from pulling in arbitrary packages at runtime. If your deployment does not require in-chat code execution, disable it entirely (`ENABLE_CODE_EXECUTION=false`, `ENABLE_CODE_INTERPRETER=false`). If it is needed, isolate it with **Open Terminal** (container-isolated) rather than relying on the legacy `pyodide` or `jupyter` engines, and never expose a `jupyter` engine without securing the Jupyter instance. Keep direct connections and direct tool servers disabled. [Details](#dependency-installation)
 
 ### Data Protection
 
